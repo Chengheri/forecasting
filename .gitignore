@@ -38,6 +38,10 @@ data/logs/*
 *.sqlite3
 .env
 
+# MLflow
+mlruns/
+.mlflow/
+
 # OS specific
 .DS_Store
 Thumbs.db 
