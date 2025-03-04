@@ -1,10 +1,92 @@
 import mlflow
 import os
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union
 from ..utils.logger import Logger
+import pandas as pd
+import numpy as np
 
 logger = Logger()
+
+class BaseModelTracker:
+    """Base class for model tracking with MLflow."""
+    
+    def __init__(self, model_name: str, experiment_name: str = "electricity_forecasting"):
+        """Initialize model tracker."""
+        self.model_name = model_name
+        self.tracker = MLflowTracker(experiment_name)
+        self.current_run = None
+    
+    def start_tracking(self, run_name: Optional[str] = None) -> None:
+        """Start tracking a new run."""
+        if run_name is None:
+            run_name = f"{self.model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        self.current_run = self.tracker.start_run(run_name)
+    
+    def end_tracking(self) -> None:
+        """End current tracking run."""
+        if self.current_run:
+            self.tracker.end_run()
+            self.current_run = None
+    
+    def log_model_params(self, params: Dict[str, Any]) -> None:
+        """Log model parameters."""
+        self.tracker.log_parameters(params)
+    
+    def log_training_metrics(self, metrics: Dict[str, float]) -> None:
+        """Log training metrics."""
+        self.tracker.log_metrics(metrics)
+    
+    def log_evaluation_metrics(self, metrics: Dict[str, float]) -> None:
+        """Log evaluation metrics."""
+        self.tracker.log_metrics({f"eval_{k}": v for k, v in metrics.items()})
+    
+    def log_model(self, model: Any) -> None:
+        """Log model artifact."""
+        self.tracker.log_model(model, f"{self.model_name}_model")
+    
+    def log_predictions(self, predictions: Union[np.ndarray, pd.Series], 
+                       actual_values: Union[np.ndarray, pd.Series],
+                       file_name: str = "predictions.csv") -> None:
+        """Log predictions and actual values."""
+        if isinstance(predictions, np.ndarray):
+            predictions = pd.Series(predictions)
+        if isinstance(actual_values, np.ndarray):
+            actual_values = pd.Series(actual_values)
+            
+        df = pd.DataFrame({
+            'predictions': predictions,
+            'actual': actual_values,
+            'error': predictions - actual_values
+        })
+        
+        # Save to temporary file
+        temp_path = f"temp_{file_name}"
+        df.to_csv(temp_path, index=False)
+        
+        # Log as artifact
+        self.tracker.log_artifact(temp_path, file_name)
+        
+        # Clean up
+        os.remove(temp_path)
+    
+    def log_feature_importance(self, feature_importance: Dict[str, float],
+                             file_name: str = "feature_importance.csv") -> None:
+        """Log feature importance scores."""
+        df = pd.DataFrame({
+            'feature': list(feature_importance.keys()),
+            'importance': list(feature_importance.values())
+        }).sort_values('importance', ascending=False)
+        
+        # Save to temporary file
+        temp_path = f"temp_{file_name}"
+        df.to_csv(temp_path, index=False)
+        
+        # Log as artifact
+        self.tracker.log_artifact(temp_path, file_name)
+        
+        # Clean up
+        os.remove(temp_path)
 
 class MLflowTracker:
     def __init__(self, experiment_name: str = "electricity_forecasting"):
