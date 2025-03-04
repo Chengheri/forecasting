@@ -9,6 +9,7 @@ A Python-based project for forecasting electricity consumption using various tim
 - Comprehensive logging system
 - Database integration for data storage
 - Model comparison and evaluation tools
+- Modern React frontend for visualization and interaction
 
 ## Project Structure
 
@@ -19,12 +20,20 @@ forecasting/
 │       ├── core/           # Core functionality
 │       ├── models/         # Forecasting models
 │       └── utils/          # Utility functions
+├── frontend/
+│   ├── src/
+│   │   ├── components/     # React components
+│   │   ├── pages/         # Page components
+│   │   └── services/      # API services
+│   └── public/            # Static files
 ├── data/
 │   └── logs/              # Application logs
 └── examples/              # Example scripts
 ```
 
 ## Setup
+
+### Backend Setup
 
 1. Clone the repository
 2. Create a virtual environment:
@@ -41,6 +50,49 @@ forecasting/
    cp .env.example .env
    # Edit .env with your configuration
    ```
+
+### Frontend Setup
+
+1. Navigate to the frontend directory:
+   ```bash
+   cd frontend
+   ```
+2. Install Node.js dependencies:
+   ```bash
+   npm install
+   ```
+3. Create a `.env` file in the frontend directory:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+## Running the Application
+
+### Start the Backend Server
+
+1. Activate the virtual environment (if not already activated):
+   ```bash
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+2. Start the backend server:
+   ```bash
+   cd backend
+   uvicorn main:app --reload
+   ```
+   The backend will be available at http://localhost:8000
+
+### Start the Frontend Development Server
+
+1. In a new terminal, navigate to the frontend directory:
+   ```bash
+   cd frontend
+   ```
+2. Start the development server:
+   ```bash
+   npm start
+   ```
+   The frontend will be available at http://localhost:3000
 
 ## Usage
 
