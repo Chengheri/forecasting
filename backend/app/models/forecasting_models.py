@@ -7,10 +7,10 @@ from .lightgbm_model import LightGBMModel
 from .xgboost_model import XGBoostModel
 from .lstm_model import LSTMTrainer
 from ..utils.logger import Logger
+from ..utils.mlflow_utils import ARIMATracker
 from ..utils.model_trackers import (
     LSTMTracker,
     ProphetTracker,
-    ARIMATracker,
     LightGBMTracker,
     XGBoostTracker
 )

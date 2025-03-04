@@ -52,15 +52,60 @@ class ARIMATracker(BaseModelTracker):
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log ARIMA-specific parameters."""
         arima_params = {
+            # Basic ARIMA parameters
             "p": params.get("p"),
             "d": params.get("d"),
             "q": params.get("q"),
+            # Seasonal parameters
             "seasonal_p": params.get("seasonal_p"),
             "seasonal_d": params.get("seasonal_d"),
             "seasonal_q": params.get("seasonal_q"),
-            "seasonal_period": params.get("seasonal_period")
+            "seasonal_period": params.get("seasonal_period"),
+            # Additional parameters
+            "trend": params.get("trend"),
+            "enforce_stationarity": params.get("enforce_stationarity", True),
+            "enforce_invertibility": params.get("enforce_invertibility", True),
+            "concentrate_scale": params.get("concentrate_scale", False),
+            "method": params.get("method", "lbfgs"),
+            "maxiter": params.get("maxiter", 50)
         }
         super().log_model_params(arima_params)
+    
+    def log_training_metrics(self, metrics: Dict[str, float]) -> None:
+        """Log ARIMA-specific training metrics."""
+        training_metrics = {
+            "aic": metrics.get("aic"),
+            "bic": metrics.get("bic"),
+            "llf": metrics.get("llf"),  # log-likelihood
+            "rmse": metrics.get("rmse"),
+            "mae": metrics.get("mae"),
+            "mape": metrics.get("mape"),
+            "residual_std": metrics.get("residual_std")
+        }
+        # Filter out None values
+        training_metrics = {k: v for k, v in training_metrics.items() if v is not None}
+        super().log_training_metrics(training_metrics)
+    
+    def log_model_diagnostics(self, diagnostics: Dict[str, Any]) -> None:
+        """Log model diagnostic information."""
+        diagnostic_metrics = {
+            "residual_autocorrelation": diagnostics.get("residual_autocorrelation"),
+            "heteroskedasticity_test": diagnostics.get("heteroskedasticity_test"),
+            "normality_test": diagnostics.get("normality_test"),
+            "seasonal_strength": diagnostics.get("seasonal_strength")
+        }
+        super().log_metrics(diagnostic_metrics)
+    
+    def log_forecast_metrics(self, metrics: Dict[str, float]) -> None:
+        """Log forecast evaluation metrics."""
+        forecast_metrics = {
+            "forecast_rmse": metrics.get("rmse"),
+            "forecast_mae": metrics.get("mae"),
+            "forecast_mape": metrics.get("mape"),
+            "forecast_r2": metrics.get("r2"),
+            "forecast_coverage": metrics.get("coverage")  # For confidence intervals
+        }
+        super().log_metrics(forecast_metrics)
 
 class LightGBMTracker(BaseModelTracker):
     """Tracker for LightGBM model training and evaluation."""
