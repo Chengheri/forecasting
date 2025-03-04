@@ -7,6 +7,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import joblib
 import warnings
 from ..utils.logger import Logger
+from ..utils.metrics import ForecastingMetrics
 
 warnings.filterwarnings('ignore')
 logger = Logger()
@@ -125,29 +126,29 @@ class TimeSeriesModel:
             raise ValueError(f"Error generating predictions: {str(e)}")
     
     def evaluate(self, actual: np.ndarray, predicted: np.ndarray) -> Dict[str, float]:
-        """Evaluate model performance.
+        """Evaluate model performance using comprehensive metrics.
         
         Args:
             actual: Array of actual values
             predicted: Array of predicted values
             
         Returns:
-            Dictionary of evaluation metrics
+            Dictionary of evaluation metrics including RMSE, MAE, MAPE, R², and directional accuracy
         """
         logger.info("Evaluating model performance")
         try:
-            # Calculate metrics
-            mse = mean_squared_error(actual, predicted)
-            rmse = np.sqrt(mse)
-            mae = mean_absolute_error(actual, predicted)
-            mape = np.mean(np.abs((actual - predicted) / actual)) * 100
+            # Calculate all available metrics using ForecastingMetrics
+            metrics = ForecastingMetrics.calculate_all_metrics(actual, predicted)
             
-            metrics = {
-                "mse": mse,
-                "rmse": rmse,
-                "mae": mae,
-                "mape": mape
-            }
+            # Add residuals analysis
+            residuals_metrics = ForecastingMetrics.evaluate_residuals(actual, predicted)
+            metrics.update({
+                "mean_residual": residuals_metrics["mean_residual"],
+                "std_residual": residuals_metrics["std_residual"],
+                "residuals_normal": residuals_metrics["is_normal"],
+                "residuals_independent": residuals_metrics["is_independent"]
+            })
+            
             logger.info(f"Model evaluation completed. Metrics: {metrics}")
             return metrics
         except Exception as e:
