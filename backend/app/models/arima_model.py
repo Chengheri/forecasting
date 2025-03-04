@@ -133,18 +133,28 @@ class TimeSeriesModel:
             predicted: Array of predicted values
             
         Returns:
-            Dictionary of evaluation metrics including RMSE, MAE, MAPE, R², and directional accuracy
+            Dictionary of evaluation metrics including:
+            - Basic metrics: RMSE, MAE, MAPE, R², directional accuracy
+            - Residuals analysis: mean, std dev, skewness, kurtosis, autocorrelation
+            - Residuals properties: normality test, independence test
         """
         logger.info("Evaluating model performance")
         try:
             # Calculate all available metrics using ForecastingMetrics
             metrics = ForecastingMetrics.calculate_all_metrics(actual, predicted)
             
-            # Add residuals analysis
+            # Add complete residuals analysis
             residuals_metrics = ForecastingMetrics.evaluate_residuals(actual, predicted)
             metrics.update({
-                "mean_residual": residuals_metrics["mean_residual"],
-                "std_residual": residuals_metrics["std_residual"],
+                # Basic residuals statistics
+                "residuals_mean": residuals_metrics["mean_residual"],
+                "residuals_std": residuals_metrics["std_residual"],
+                # Distribution characteristics
+                "residuals_skewness": residuals_metrics["skewness"],
+                "residuals_kurtosis": residuals_metrics["kurtosis"],
+                # Time series properties
+                "residuals_autocorrelation": residuals_metrics["autocorrelation"],
+                # Statistical tests results
                 "residuals_normal": residuals_metrics["is_normal"],
                 "residuals_independent": residuals_metrics["is_independent"]
             })
