@@ -6,15 +6,60 @@ from ..utils.logger import Logger
 
 logger = Logger()
 
+def generate_weather_data(
+    dates: pd.DatetimeIndex,
+    base_temp: float = 20.0,
+    temp_amplitude: float = 10.0,
+    base_humidity: float = 60.0,
+    humidity_amplitude: float = 20.0
+) -> pd.DataFrame:
+    """Generate synthetic weather data with seasonal patterns."""
+    n_points = len(dates)
+    
+    # Generate temperature with seasonal pattern
+    # Shift the phase to have summer months (6-8) be warmest
+    temp_pattern = np.sin(2 * np.pi * ((dates.month - 6) % 12) / 12)  # Annual cycle
+    daily_temp = np.sin(2 * np.pi * np.arange(24) / 24)  # Daily cycle
+    daily_temp = np.tile(daily_temp, n_points // 24 + 1)[:n_points]
+    
+    temperature = base_temp + temp_amplitude * temp_pattern + 5 * daily_temp
+    
+    # Generate humidity with seasonal pattern (inverse correlation with temperature)
+    humidity_pattern = -0.5 * temp_pattern  # Inverse of temperature
+    daily_humidity = -0.3 * daily_temp  # Inverse of daily temperature
+    
+    humidity = base_humidity + humidity_amplitude * humidity_pattern + 10 * daily_humidity
+    
+    # Add some random noise
+    temp_noise = np.random.normal(0, 2, n_points)
+    humidity_noise = np.random.normal(0, 5, n_points)
+    
+    temperature += temp_noise
+    humidity += humidity_noise
+    
+    # Ensure realistic ranges
+    temperature = np.clip(temperature, -5, 35)  # Temperature range: -5°C to 35°C
+    humidity = np.clip(humidity, 30, 90)  # Humidity range: 30% to 90%
+    
+    return pd.DataFrame({
+        'temperature': temperature,
+        'humidity': humidity
+    })
+
 def generate_consumption_data(
     start_date: datetime,
     end_date: datetime,
-    freq: str = 'H',
+    freq: str = 'h',
     base_value: float = 100.0,
     noise_level: float = 0.1,
     seasonality: bool = True,
     trend: bool = True,
-    holidays: bool = True
+    holidays: bool = True,
+    weather_effects: bool = True,
+    base_temp: float = 20.0,
+    temp_amplitude: float = 10.0,
+    base_humidity: float = 60.0,
+    humidity_amplitude: float = 20.0
 ) -> pd.DataFrame:
     """Generate sample electricity consumption data."""
     logger.info(f"Generating sample consumption data from {start_date} to {end_date}")
@@ -42,16 +87,42 @@ def generate_consumption_data(
             daily_pattern = np.sin(2 * np.pi * np.arange(24) / 24)
             daily_pattern = np.tile(daily_pattern, n_points // 24 + 1)[:n_points]
             
-            # Weekly seasonality
-            weekly_pattern = np.sin(2 * np.pi * np.arange(7) / 7)
-            weekly_pattern = np.tile(weekly_pattern, n_points // (24 * 7) + 1)[:n_points]
+            # Weekly seasonality (using the day of week from the date)
+            weekly_pattern = np.sin(2 * np.pi * data['date'].dt.dayofweek / 7)
             
-            # Monthly seasonality
-            monthly_pattern = np.sin(2 * np.pi * np.arange(12) / 12)
-            monthly_pattern = np.tile(monthly_pattern, n_points // (24 * 30) + 1)[:n_points]
+            # Monthly seasonality (using the month number from the date)
+            monthly_pattern = np.sin(2 * np.pi * (data['date'].dt.month - 1) / 12)
             
             # Combine patterns
             data['value'] *= (1 + 0.3 * daily_pattern + 0.2 * weekly_pattern + 0.1 * monthly_pattern)
+        
+        # Add weather effects
+        if weather_effects:
+            logger.debug("Adding weather effects")
+            weather_data = generate_weather_data(
+                dates,
+                base_temp=base_temp,
+                temp_amplitude=temp_amplitude,
+                base_humidity=base_humidity,
+                humidity_amplitude=humidity_amplitude
+            )
+            
+            # Temperature effects (heating and cooling)
+            temp_effect = np.zeros(n_points)
+            temp_effect[weather_data['temperature'] < 15] = 0.2  # Heating effect
+            temp_effect[weather_data['temperature'] > 25] = 0.3  # Cooling effect
+            
+            # Humidity effects (increased consumption in high humidity)
+            humidity_effect = np.zeros(n_points)
+            humidity_effect[weather_data['humidity'] > 70] = 0.1  # High humidity effect
+            
+            # Combine weather effects
+            weather_factor = 1 + temp_effect + humidity_effect
+            data['value'] *= weather_factor
+            
+            # Add weather data to the output
+            data['temperature'] = weather_data['temperature']
+            data['humidity'] = weather_data['humidity']
         
         # Add holidays
         if holidays:
@@ -132,6 +203,11 @@ def generate_sample_dataset(
                 'seasonality': True,
                 'trend': True,
                 'holidays': True,
+                'weather_effects': True,
+                'base_temp': 20.0,
+                'temp_amplitude': 10.0,
+                'base_humidity': 60.0,
+                'humidity_amplitude': 20.0,
                 'anomalies': {
                     'type': 'spike',
                     'count': 10,
@@ -147,7 +223,12 @@ def generate_sample_dataset(
             noise_level=config['noise_level'],
             seasonality=config['seasonality'],
             trend=config['trend'],
-            holidays=config['holidays']
+            holidays=config['holidays'],
+            weather_effects=config.get('weather_effects', True),
+            base_temp=config.get('base_temp', 20.0),
+            temp_amplitude=config.get('temp_amplitude', 10.0),
+            base_humidity=config.get('base_humidity', 60.0),
+            humidity_amplitude=config.get('humidity_amplitude', 20.0)
         )
         
         # Add anomalies if configured

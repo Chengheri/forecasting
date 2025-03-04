@@ -1,16 +1,20 @@
 import pandas as pd
 import numpy as np
 from typing import Tuple, List, Dict, Any, Optional
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from datetime import datetime, timedelta
 from ..utils.logger import Logger
+from .preprocessor_tracker import PreprocessorTracker
 
 logger = Logger()
 
 class DataPreprocessor:
-    def __init__(self):
-        logger.info("Initializing DataPreprocessor")
-        self.scaler = StandardScaler()
+    def __init__(self, config: Dict[str, Any]):
+        """Initialize the data preprocessor."""
+        self.config = config
+        self.scaler = None
+        self.tracker = PreprocessorTracker()
+        self.pipeline_steps = []
         
     def create_sequences(self, data: np.ndarray, seq_length: int) -> Tuple[np.ndarray, np.ndarray]:
         """Create sequences for time series models."""
@@ -180,66 +184,224 @@ class DataPreprocessor:
             logger.error(f"Error scaling features: {str(e)}")
             raise
 
-    def prepare_data(self, data: pd.DataFrame, config: Dict[str, Any]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-        """Prepare data according to the configuration."""
+    def prepare_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Prepare data with tracking."""
         logger.info("Starting data preparation")
         try:
+            # Start tracking
+            self.tracker.start_tracking()
+            self.tracker.log_preprocessing_config(self.config)
+            self.tracker.log_missing_values_stats(data)
+            self.tracker.log_feature_stats(data)
+            
             # Handle missing values
-            data = self.handle_missing_values(data, config.get('missing_values_method', 'interpolate'))
+            if self.config.get('handle_missing_values'):
+                data = self.handle_missing_values(data)
+                self.pipeline_steps.append({
+                    "step": "handle_missing_values",
+                    "method": self.config.get('missing_values_method', 'mean')
+                })
             
-            # Detect and handle anomalies using advanced preprocessing
-            if 'anomaly_detection' in config:
-                logger.info("Using advanced anomaly detection")
-                from .advanced_preprocessing import AdvancedPreprocessor
-                advanced_preprocessor = AdvancedPreprocessor()
-                
-                anomaly_config = config['anomaly_detection']
-                data = advanced_preprocessor.detect_anomalies(
-                    data,
-                    target_column=config['target_column'],
-                    method=anomaly_config.get('method', 'isolation_forest'),
-                    window=anomaly_config.get('window', 24),
-                    threshold=anomaly_config.get('threshold', 3.0),
-                    contamination=anomaly_config.get('contamination', 0.1)
-                )
-                
-                # Clean detected anomalies if specified
-                if anomaly_config.get('clean_anomalies', False):
-                    logger.info("Cleaning detected anomalies")
-                    data = advanced_preprocessor.clean_data(
-                        data,
-                        target_column=config['target_column'],
-                        features=[config['target_column']]
-                    )
-            else:
-                # Use basic outlier removal if no advanced anomaly detection specified
-                if 'outlier_removal' in config:
-                    data = self.remove_outliers(
-                        data,
-                        config['outlier_removal']['column'],
-                        config['outlier_removal']['method'],
-                        config['outlier_removal'].get('threshold', 3.0)
-                    )
+            # Remove outliers
+            if self.config.get('remove_outliers'):
+                data = self.remove_outliers(data)
+                self.pipeline_steps.append({
+                    "step": "remove_outliers",
+                    "method": self.config.get('outlier_method', 'zscore')
+                })
             
-            # Add time features
-            data = self.add_time_features(data, config.get('date_column', 'date'))
+            # Add time-based features
+            if self.config.get('add_time_features'):
+                data = self.add_time_features(data)
+                self.pipeline_steps.append({
+                    "step": "add_time_features",
+                    "features": list(data.columns)
+                })
             
             # Add lag features
-            if 'lags' in config:
-                data = self.add_lag_features(data, config['target_column'], config['lags'])
+            if self.config.get('add_lag_features'):
+                data = self.add_lag_features(data)
+                self.pipeline_steps.append({
+                    "step": "add_lag_features",
+                    "lags": self.config.get('lag_features', [1, 2, 3])
+                })
             
             # Add rolling features
-            if 'rolling_windows' in config:
-                data = self.add_rolling_features(data, config['target_column'], config['rolling_windows'], ['mean', 'std'])
+            if self.config.get('add_rolling_features'):
+                data = self.add_rolling_features(data)
+                self.pipeline_steps.append({
+                    "step": "add_rolling_features",
+                    "windows": self.config.get('rolling_windows', [7, 30])
+                })
             
             # Scale features
-            if 'scale_columns' in config:
-                data, scaler_params = self.scale_features(data, config['scale_columns'])
-            else:
-                scaler_params = {}
+            if self.config.get('scale_features'):
+                data = self.scale_features(data)
+                self.pipeline_steps.append({
+                    "step": "scale_features",
+                    "method": self.config.get('scaling_method', 'standard')
+                })
+            
+            # Log final feature stats
+            self.tracker.log_feature_stats(data)
+            
+            # Log complete pipeline
+            self.tracker.log_preprocessing_pipeline(self.pipeline_steps)
             
             logger.info("Data preparation completed successfully")
-            return data, scaler_params
+            return data
+            
         except Exception as e:
-            logger.error(f"Error preparing data: {str(e)}")
+            logger.error(f"Error during data preparation: {str(e)}")
+            raise
+        finally:
+            self.tracker.end_tracking()
+    
+    def handle_missing_values(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Handle missing values with tracking."""
+        method = self.config.get('missing_values_method', 'mean')
+        logger.info(f"Handling missing values using {method} method")
+        
+        try:
+            if method == 'mean':
+                data = data.fillna(data.mean())
+            elif method == 'median':
+                data = data.fillna(data.median())
+            elif method == 'mode':
+                data = data.fillna(data.mode().iloc[0])
+            elif method == 'ffill':
+                data = data.fillna(method='ffill')
+            elif method == 'bfill':
+                data = data.fillna(method='bfill')
+            
+            self.tracker.log_model_params({
+                "missing_values_method": method,
+                "columns_handled": list(data.columns)
+            })
+            
+            return data
+        except Exception as e:
+            logger.error(f"Error handling missing values: {str(e)}")
+            raise
+    
+    def remove_outliers(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Remove outliers with tracking."""
+        method = self.config.get('outlier_method', 'zscore')
+        threshold = self.config.get('outlier_threshold', 3)
+        logger.info(f"Removing outliers using {method} method with threshold {threshold}")
+        
+        try:
+            if method == 'zscore':
+                z_scores = np.abs((data - data.mean()) / data.std())
+                data = data[(z_scores < threshold).all(axis=1)]
+            elif method == 'iqr':
+                Q1 = data.quantile(0.25)
+                Q3 = data.quantile(0.75)
+                IQR = Q3 - Q1
+                data = data[~((data < (Q1 - 1.5 * IQR)) | (data > (Q3 + 1.5 * IQR))).any(axis=1)]
+            
+            n_outliers = len(data) - len(data)
+            self.tracker.log_model_params({
+                "outlier_method": method,
+                "outlier_threshold": threshold,
+                "n_outliers_removed": n_outliers,
+                "outlier_percentage": (n_outliers / len(data)) * 100
+            })
+            
+            return data
+        except Exception as e:
+            logger.error(f"Error removing outliers: {str(e)}")
+            raise
+    
+    def add_time_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Add time-based features with tracking."""
+        logger.info("Adding time-based features")
+        
+        try:
+            if 'timestamp' in data.columns:
+                data['hour'] = data['timestamp'].dt.hour
+                data['day'] = data['timestamp'].dt.day
+                data['month'] = data['timestamp'].dt.month
+                data['year'] = data['timestamp'].dt.year
+                data['dayofweek'] = data['timestamp'].dt.dayofweek
+                data['quarter'] = data['timestamp'].dt.quarter
+                
+                self.tracker.log_model_params({
+                    "time_features_added": ['hour', 'day', 'month', 'year', 'dayofweek', 'quarter']
+                })
+            
+            return data
+        except Exception as e:
+            logger.error(f"Error adding time features: {str(e)}")
+            raise
+    
+    def add_lag_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Add lag features with tracking."""
+        lags = self.config.get('lag_features', [1, 2, 3])
+        logger.info(f"Adding lag features with lags: {lags}")
+        
+        try:
+            target_col = self.config.get('target_column', 'value')
+            for lag in lags:
+                data[f'{target_col}_lag_{lag}'] = data[target_col].shift(lag)
+            
+            self.tracker.log_model_params({
+                "lag_features_added": [f'{target_col}_lag_{lag}' for lag in lags]
+            })
+            
+            return data
+        except Exception as e:
+            logger.error(f"Error adding lag features: {str(e)}")
+            raise
+    
+    def add_rolling_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Add rolling features with tracking."""
+        windows = self.config.get('rolling_windows', [7, 30])
+        logger.info(f"Adding rolling features with windows: {windows}")
+        
+        try:
+            target_col = self.config.get('target_column', 'value')
+            for window in windows:
+                data[f'{target_col}_rolling_mean_{window}'] = data[target_col].rolling(window=window).mean()
+                data[f'{target_col}_rolling_std_{window}'] = data[target_col].rolling(window=window).std()
+            
+            self.tracker.log_model_params({
+                "rolling_features_added": [
+                    f'{target_col}_rolling_mean_{window}' for window in windows
+                ] + [
+                    f'{target_col}_rolling_std_{window}' for window in windows
+                ]
+            })
+            
+            return data
+        except Exception as e:
+            logger.error(f"Error adding rolling features: {str(e)}")
+            raise
+    
+    def scale_features(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Scale features with tracking."""
+        method = self.config.get('scaling_method', 'standard')
+        columns = self.config.get('scaled_columns', data.columns)
+        logger.info(f"Scaling features using {method} method")
+        
+        try:
+            if method == 'standard':
+                self.scaler = StandardScaler()
+                data[columns] = self.scaler.fit_transform(data[columns])
+            elif method == 'minmax':
+                self.scaler = MinMaxScaler()
+                data[columns] = self.scaler.fit_transform(data[columns])
+            
+            self.tracker.log_scaling_params(
+                method=method,
+                columns=list(columns),
+                params={
+                    "scaler_type": type(self.scaler).__name__,
+                    "n_features": len(columns)
+                }
+            )
+            
+            return data
+        except Exception as e:
+            logger.error(f"Error scaling features: {str(e)}")
             raise 
