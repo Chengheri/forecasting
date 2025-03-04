@@ -13,8 +13,9 @@ class Logger:
         return cls._instance
     
     def _initialize_logger(self):
-        # Create logs directory if it doesn't exist
-        log_dir = os.path.join("data", "logs")
+        # Create logs directory with absolute path
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+        log_dir = os.path.join(project_root, 'data', 'logs')
         os.makedirs(log_dir, exist_ok=True)
         
         # Create logger
@@ -37,6 +38,10 @@ class Logger:
         file_handler = logging.FileHandler(log_file, encoding="utf-8")
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(formatter)
+        
+        # Remove existing handlers if any
+        if self.logger.handlers:
+            self.logger.handlers.clear()
         
         # Add handlers to logger
         self.logger.addHandler(console_handler)
