@@ -7,6 +7,13 @@ from .lightgbm_model import LightGBMModel
 from .xgboost_model import XGBoostModel
 from .lstm_model import LSTMTrainer
 from ..utils.logger import Logger
+from ..utils.model_trackers import (
+    LSTMTracker,
+    ProphetTracker,
+    ARIMATracker,
+    LightGBMTracker,
+    XGBoostTracker
+)
 
 logger = Logger()
 
@@ -21,9 +28,28 @@ def create_model(model_name: str, config: Dict[str, Any]) -> BaseForecastingMode
         "lstm": LSTMTrainer
     }
     
+    tracker_map = {
+        "prophet": ProphetTracker,
+        "neuralprophet": ProphetTracker,  # Uses same parameters as Prophet
+        "transformer": LSTMTracker,  # Uses similar parameters to LSTM
+        "lightgbm": LightGBMTracker,
+        "xgboost": XGBoostTracker,
+        "lstm": LSTMTracker
+    }
+    
     if model_name not in model_map:
         logger.error(f"Attempted to create unsupported model: {model_name}")
         raise ValueError(f"Model {model_name} not supported")
     
     logger.info(f"Creating {model_name} model with config: {config}")
-    return model_map[model_name](config) 
+    
+    # Create model instance
+    model = model_map[model_name](config)
+    
+    # Set up tracker if available
+    if model_name in tracker_map:
+        tracker = tracker_map[model_name]()
+        model.set_tracker(tracker)
+        logger.info(f"Added {model_name} tracker to model")
+    
+    return model 
