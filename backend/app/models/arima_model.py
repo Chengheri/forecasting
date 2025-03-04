@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Union
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.tsa.arima.model import ARIMA
 from sklearn.metrics import mean_squared_error, mean_absolute_error
@@ -77,50 +77,70 @@ class TimeSeriesModel:
             results = {
                 "aic": self.fitted_model.aic,
                 "bic": self.fitted_model.bic,
+                "hqic": self.fitted_model.hqic,
                 "model_type": self.model_type
             }
-            logger.info(f"Model training completed successfully. AIC: {results['aic']}, BIC: {results['bic']}")
+            logger.info(f"Model training completed successfully. AIC: {results['aic']}, BIC: {results['bic']}, HQIC: {results['hqic']}")
             return results
         except Exception as e:
             logger.error(f"Error training model: {str(e)}")
             raise ValueError(f"Error fitting model: {str(e)}")
     
-    def predict(self, steps: int, last_data: pd.DataFrame = None) -> Tuple[np.ndarray, np.ndarray]:
-        """Generate forecasts and confidence intervals."""
-        logger.info(f"Generating predictions for {steps} steps")
+    def predict(self, data: Union[int, pd.DataFrame], last_data: pd.DataFrame = None) -> Tuple[np.ndarray, np.ndarray]:
+        """Generate forecasts and confidence intervals.
+        
+        Args:
+            data: Either the number of steps to forecast or a test DataFrame
+            last_data: Optional DataFrame containing the last known data points
+            
+        Returns:
+            Tuple of predicted mean and confidence intervals
+        """
         try:
             if self.fitted_model is None:
                 logger.error("Model must be trained before prediction")
                 raise ValueError("Model must be trained before prediction")
+            
+            # Determine number of steps
+            if isinstance(data, pd.DataFrame):
+                steps = len(data)
+                logger.info(f"Generating predictions for test data with {steps} steps")
+            else:
+                steps = data
+                logger.info(f"Generating predictions for {steps} steps")
             
             # Get forecast
             forecast = self.fitted_model.get_forecast(steps=steps)
             mean_forecast = forecast.predicted_mean
             
             # Get confidence intervals
-            confidence_intervals = forecast.conf_int()
-            lower_bounds = confidence_intervals.iloc[:, 0]
-            upper_bounds = confidence_intervals.iloc[:, 1]
+            conf_int = forecast.conf_int()
+            lower = conf_int.iloc[:, 0]
+            upper = conf_int.iloc[:, 1]
             
-            logger.info("Predictions generated successfully")
-            return mean_forecast.values, (lower_bounds.values, upper_bounds.values)
+            return mean_forecast, (lower, upper)
+            
         except Exception as e:
             logger.error(f"Error generating predictions: {str(e)}")
-            raise
+            raise ValueError(f"Error generating predictions: {str(e)}")
     
-    def evaluate(self, test_data: pd.DataFrame) -> Dict[str, float]:
-        """Evaluate model performance."""
+    def evaluate(self, actual: np.ndarray, predicted: np.ndarray) -> Dict[str, float]:
+        """Evaluate model performance.
+        
+        Args:
+            actual: Array of actual values
+            predicted: Array of predicted values
+            
+        Returns:
+            Dictionary of evaluation metrics
+        """
         logger.info("Evaluating model performance")
         try:
-            ts_test = self.prepare_data(test_data)
-            predictions = self.fitted_model.get_forecast(steps=len(ts_test))
-            mean_forecast = predictions.predicted_mean
-            
             # Calculate metrics
-            mse = mean_squared_error(ts_test, mean_forecast)
+            mse = mean_squared_error(actual, predicted)
             rmse = np.sqrt(mse)
-            mae = mean_absolute_error(ts_test, mean_forecast)
-            mape = np.mean(np.abs((ts_test - mean_forecast) / ts_test)) * 100
+            mae = mean_absolute_error(actual, predicted)
+            mape = np.mean(np.abs((actual - predicted) / actual)) * 100
             
             metrics = {
                 "mse": mse,

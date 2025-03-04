@@ -1,0 +1,60 @@
+{
+    "preprocessing": {
+        "handle_missing_values": true,
+        "missing_values_method": "interpolate",
+        "handle_outliers": true,
+        "outlier_config": {
+            "method": "isolation_forest",
+            "contamination": 0.1,
+            "target_column": "value"
+        },
+        "remove_anomalies": true,
+        "add_time_features": true,
+        "add_lag_features": true,
+        "lag_features": [1, 2, 3, 24, 168],
+        "add_rolling_features": true,
+        "rolling_windows": [24, 168],
+        "rolling_functions": ["mean", "std", "min", "max"],
+        "scale_features": true,
+        "scaling_method": "standard",
+        "columns_to_scale": ["value", "temperature", "humidity"]
+    },
+    "model": {
+        "type": "arima",
+        "grid_search": {
+            "p": [1, 2, 3],
+            "d": [1],
+            "q": [1, 2]
+        },
+        "trend": "c",
+        "train_test_split": 0.8
+    },
+    "mlflow": {
+        "experiment_name": "arima_optimization_new",
+        "tracking_uri": "http://localhost:5001",
+        "register_model": true
+    },
+    "paths": {
+        "data": "data/examples/consumption_data_france.csv",
+        "models_dir": "data/models",
+        "analysis_dir": "analysis"
+    },
+    "analysis": {
+        "plots": {
+            "actual_vs_predicted": true,
+            "residuals_analysis": true,
+            "metrics_over_time": true,
+            "seasonal_decomposition": true,
+            "rolling_window": 24
+        },
+        "metrics": [
+            "rmse",
+            "mae",
+            "r2",
+            "mse",
+            "aic",
+            "bic",
+            "hqic"
+        ]
+    }
+} 
