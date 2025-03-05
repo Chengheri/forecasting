@@ -14,11 +14,17 @@ from .trackers import PreprocessorTracker
 logger = Logger()
 
 class AdvancedPreprocessor:
-    def __init__(self, config: Dict[str, Any]):
-        """Initialize the advanced preprocessor."""
+    def __init__(self, config: Dict[str, Any], experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+        """Initialize the advanced preprocessor.
+        
+        Args:
+            config: Dictionary containing preprocessing configuration
+            experiment_name: Name of the MLflow experiment
+            run_name: Optional name for the MLflow run
+        """
         self.config = config
         self.logger = Logger()
-        self.tracker = PreprocessorTracker("electricity_forecasting")
+        self.tracker = PreprocessorTracker(experiment_name, run_name)
         self.pipeline_steps = []
         self.scaler = StandardScaler()
         self.anomaly_detectors = {}
