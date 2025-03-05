@@ -217,7 +217,11 @@ class DataPreprocessor:
                 })
                 
                 from .advanced_preprocessing import AdvancedPreprocessor
-                advanced_preprocessor = AdvancedPreprocessor(outlier_config)
+                advanced_preprocessor = AdvancedPreprocessor(
+                    config=outlier_config,
+                    experiment_name=self.tracker.experiment_name,
+                    run_name=self.tracker.run_name
+                )
                 
                 # Detect and handle anomalies
                 df = advanced_preprocessor.detect_anomalies(
