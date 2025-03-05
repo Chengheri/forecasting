@@ -9,8 +9,7 @@ from sklearn.neighbors import LocalOutlierFactor
 from scipy import stats
 import matplotlib.pyplot as plt
 from ..utils.logger import Logger
-from .preprocessor_tracker import PreprocessorTracker
-from .mlflow_utils import PreprocessorTracker
+from .trackers import PreprocessorTracker
 
 logger = Logger()
 
