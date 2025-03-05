@@ -4,17 +4,22 @@ from typing import Tuple, List, Dict, Any, Optional
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from datetime import datetime, timedelta
 from ..utils.logger import Logger
-from .preprocessor_tracker import PreprocessorTracker
-from .mlflow_utils import PreprocessorTracker as MLFlowPreprocessorTracker
+from .trackers import PreprocessorTracker
 
 logger = Logger()
 
 class DataPreprocessor:
-    def __init__(self, config: Dict[str, Any]):
-        """Initialize the data preprocessor."""
+    def __init__(self, config: Dict[str, Any], experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+        """Initialize the data preprocessor.
+        
+        Args:
+            config: Dictionary containing preprocessing configuration
+            experiment_name: Name of the MLflow experiment
+            run_name: Name of the MLflow run (optional)
+        """
         self.config = config
         self.scaler = None
-        self.tracker = MLFlowPreprocessorTracker("electricity_forecasting")
+        self.tracker = PreprocessorTracker(experiment_name=experiment_name, run_name=run_name)
         self.pipeline_steps = []
         
     def create_sequences(self, data: np.ndarray, seq_length: int) -> Tuple[np.ndarray, np.ndarray]:
