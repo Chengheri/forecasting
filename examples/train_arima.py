@@ -8,7 +8,7 @@ from datetime import datetime
 import mlflow
 import matplotlib.pyplot as plt
 from backend.app.models.arima_model import TimeSeriesModel
-from backend.app.utils.model_trackers import ARIMATracker
+from backend.app.utils.trackers import ARIMATracker
 from backend.app.utils.logger import Logger
 from backend.app.utils.preprocessing import DataPreprocessor
 from backend.app.utils.advanced_preprocessing import AdvancedPreprocessor
@@ -37,8 +37,13 @@ def main():
         df['date'] = pd.to_datetime(df['date'])
         
         # Start preprocessing run with parent suffix
-        with mlflow.start_run(run_name=f"preprocessing_{parent_run_id[:8] if parent_run_id else ''}", nested=True):
-            preprocessor = DataPreprocessor(config=config['preprocessing'])
+        run_name = f"preprocessing_{parent_run_id[:8] if parent_run_id else ''}"
+        with mlflow.start_run(run_name=run_name, nested=True):
+            preprocessor = DataPreprocessor(
+                config=config['preprocessing'],
+                experiment_name=config['mlflow']['experiment_name'],
+                run_name=run_name
+            )
             df = preprocessor.prepare_data(df)
             mlflow.log_params(config['preprocessing'])
         

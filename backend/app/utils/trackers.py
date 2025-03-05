@@ -1,17 +1,119 @@
-from typing import Dict, Any, Optional, Union
+"""
+Model and preprocessing tracking utilities for MLflow.
+"""
+
+from typing import Dict, Any, List, Optional, Union
 import numpy as np
 import pandas as pd
-from .mlflow_utils import BaseModelTracker
+from .mlflow_utils import BaseTracker
+from ..utils.logger import Logger
 
-class LSTMTracker(BaseModelTracker):
+logger = Logger()
+
+class PreprocessorTracker(BaseTracker):
+    """Tracker for data preprocessing steps."""
+    
+    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+        super().__init__(experiment_name, run_name)
+    
+    def log_preprocessing_config(self, config: Dict[str, Any]) -> None:
+        """Log preprocessing configuration."""
+        logger.info("Logging preprocessing configuration")
+        self.log_model_params(config)
+    
+    def log_missing_values_stats(self, df: pd.DataFrame) -> None:
+        """Log statistics about missing values."""
+        missing_stats = df.isnull().sum().to_dict()
+        missing_percentages = (df.isnull().sum() / len(df) * 100).to_dict()
+        
+        stats = {
+            "total_rows": len(df),
+            "missing_values": missing_stats,
+            "missing_percentages": missing_percentages
+        }
+        
+        self.log_model_params(stats)
+    
+    def log_anomaly_detection_stats(self, 
+                                  method: str,
+                                  n_anomalies: int,
+                                  anomaly_percentage: float,
+                                  params: Dict[str, Any]) -> None:
+        """Log anomaly detection statistics."""
+        stats = {
+            "anomaly_detection_method": method,
+            "n_anomalies": n_anomalies,
+            "anomaly_percentage": anomaly_percentage,
+            **params
+        }
+        
+        self.log_model_params(stats)
+    
+    def log_feature_stats(self, df: pd.DataFrame) -> None:
+        """Log statistics about features."""
+        stats = {}
+        
+        for column in df.columns:
+            if pd.api.types.is_numeric_dtype(df[column]):
+                stats[f"{column}_mean"] = df[column].mean()
+                stats[f"{column}_std"] = df[column].std()
+                stats[f"{column}_min"] = df[column].min()
+                stats[f"{column}_max"] = df[column].max()
+                stats[f"{column}_skew"] = df[column].skew()
+                stats[f"{column}_kurtosis"] = df[column].kurtosis()
+        
+        self.log_model_params(stats)
+    
+    def log_scaling_params(self, 
+                          method: str,
+                          columns: List[str],
+                          params: Dict[str, Any]) -> None:
+        """Log scaling parameters."""
+        stats = {
+            "scaling_method": method,
+            "scaled_columns": columns,
+            **params
+        }
+        
+        self.log_model_params(stats)
+    
+    def log_feature_engineering(self, 
+                              added_features: List[str],
+                              lag_features: List[str],
+                              rolling_features: List[str]) -> None:
+        """Log feature engineering details."""
+        stats = {
+            "added_features": added_features,
+            "lag_features": lag_features,
+            "rolling_features": rolling_features
+        }
+        
+        self.log_model_params(stats)
+    
+    def log_data_split(self, 
+                      train_size: int,
+                      test_size: int,
+                      validation_size: Optional[int] = None) -> None:
+        """Log data split information."""
+        stats = {
+            "train_size": train_size,
+            "test_size": test_size,
+            "validation_size": validation_size,
+            "total_size": train_size + test_size + (validation_size or 0)
+        }
+        
+        self.log_model_params(stats)
+    
+    def log_preprocessing_pipeline(self, steps: List[Dict[str, Any]]) -> None:
+        """Log the complete preprocessing pipeline steps."""
+        for i, step in enumerate(steps):
+            self.log_model_params({f"pipeline_step_{i}": step})
+
+class LSTMTracker(BaseTracker):
     """Tracker for LSTM model training and evaluation."""
     
-    def __init__(self, experiment_name: str = "electricity_forecasting"):
-        super().__init__("lstm", experiment_name)
-    
-    def log_training_metrics(self, metrics: Dict[str, float]) -> None:
-        """Log LSTM-specific training metrics."""
-        super().log_training_metrics(metrics)
+    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+        super().__init__(experiment_name, run_name)
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log LSTM-specific parameters."""
@@ -26,11 +128,11 @@ class LSTMTracker(BaseModelTracker):
         }
         super().log_model_params(lstm_params)
 
-class ProphetTracker(BaseModelTracker):
+class ProphetTracker(BaseTracker):
     """Tracker for Prophet model training and evaluation."""
     
-    def __init__(self, experiment_name: str = "electricity_forecasting"):
-        super().__init__("prophet", experiment_name)
+    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+        super().__init__(experiment_name, run_name)
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log Prophet-specific parameters."""
@@ -43,11 +145,11 @@ class ProphetTracker(BaseModelTracker):
         }
         super().log_model_params(prophet_params)
 
-class ARIMATracker(BaseModelTracker):
+class ARIMATracker(BaseTracker):
     """Tracker for ARIMA model training and evaluation."""
     
-    def __init__(self, experiment_name: str = "electricity_forecasting"):
-        super().__init__("arima", experiment_name)
+    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+        super().__init__(experiment_name, run_name)
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log ARIMA-specific parameters."""
@@ -84,7 +186,7 @@ class ARIMATracker(BaseModelTracker):
         }
         # Filter out None values
         training_metrics = {k: v for k, v in training_metrics.items() if v is not None}
-        super().log_training_metrics(training_metrics)
+        super().log_metrics(training_metrics)
     
     def log_model_diagnostics(self, diagnostics: Dict[str, Any]) -> None:
         """Log model diagnostic information."""
@@ -107,11 +209,11 @@ class ARIMATracker(BaseModelTracker):
         }
         super().log_metrics(forecast_metrics)
 
-class LightGBMTracker(BaseModelTracker):
+class LightGBMTracker(BaseTracker):
     """Tracker for LightGBM model training and evaluation."""
     
-    def __init__(self, experiment_name: str = "electricity_forecasting"):
-        super().__init__("lightgbm", experiment_name)
+    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+        super().__init__(experiment_name, run_name)
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log LightGBM-specific parameters."""
@@ -132,11 +234,11 @@ class LightGBMTracker(BaseModelTracker):
         importance = dict(zip(model.feature_name_, model.feature_importances_))
         super().log_feature_importance(importance)
 
-class XGBoostTracker(BaseModelTracker):
+class XGBoostTracker(BaseTracker):
     """Tracker for XGBoost model training and evaluation."""
     
-    def __init__(self, experiment_name: str = "electricity_forecasting"):
-        super().__init__("xgboost", experiment_name)
+    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+        super().__init__(experiment_name, run_name)
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log XGBoost-specific parameters."""
