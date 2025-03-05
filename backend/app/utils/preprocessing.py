@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Tuple, List, Dict, Any, Optional
+from typing import Tuple, List, Dict, Any, Optional, Union
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from datetime import datetime, timedelta
 from ..utils.logger import Logger
@@ -123,28 +123,125 @@ class DataPreprocessor:
         """Inverse transform normalized data."""
         return self.scaler.inverse_transform(data.reshape(-1, 1)).reshape(-1)
     
-    def prepare_data_for_training(self, df: pd.DataFrame, target_column: str,
-                                seq_length: int = 24) -> Tuple[np.ndarray, np.ndarray]:
-        """Prepare data for training time series models."""
-        # Add all relevant features
-        df = self.add_time_features(df)
-        df = self.add_lag_features(df, target_column, [1, 2, 3, 24, 48])
-        df = self.add_rolling_features(df, target_column, 
-                                     windows=[6, 12, 24], 
-                                     functions=['mean', 'std'])
+    def prepare_data(self, df: pd.DataFrame, target_column: str = 'value', create_sequences: bool = False, seq_length: int = 24) -> Union[pd.DataFrame, Tuple[np.ndarray, np.ndarray]]:
+        """Prepare data for modeling with comprehensive preprocessing options.
         
-        # Handle missing values
-        df = self.handle_missing_values(df)
-        
-        # Normalize features
-        feature_columns = [col for col in df.columns if col != target_column]
-        X = df[feature_columns].values
-        y = df[target_column].values
-        
-        # Create sequences
-        X_seq, y_seq = self.create_sequences(X, seq_length)
-        
-        return X_seq, y_seq
+        Args:
+            df: Input DataFrame
+            target_column: Name of the target column (default: 'value')
+            create_sequences: Whether to create sequences for time series models (default: False)
+            seq_length: Length of sequences if create_sequences is True (default: 24)
+            
+        Returns:
+            If create_sequences is False: Preprocessed DataFrame
+            If create_sequences is True: Tuple of (X_sequences, y_sequences) as numpy arrays
+        """
+        logger.info("Starting data preparation")
+        try:
+            # Track preprocessing steps
+            self.pipeline_steps = []
+            
+            # Handle missing values if configured
+            if self.config.get('handle_missing_values', False):
+                method = self.config.get('missing_values_method', 'interpolate')
+                df = self.handle_missing_values(df, method)
+                self.pipeline_steps.append({"step": "handle_missing_values", "method": method})
+            
+            # Handle outliers and anomalies if configured
+            if self.config.get('handle_outliers', False):
+                outlier_config = self.config.get('outlier_config', {
+                    'method': 'isolation_forest',
+                    'contamination': 0.1,
+                    'target_column': target_column
+                })
+                
+                from .advanced_preprocessing import AdvancedPreprocessor
+                advanced_preprocessor = AdvancedPreprocessor(
+                    config=outlier_config,
+                    experiment_name=self.tracker.experiment_name,
+                    run_name=self.tracker.run_name
+                )
+                
+                # Detect and handle anomalies
+                df = advanced_preprocessor.detect_anomalies(
+                    data=df,
+                    target_column=target_column,
+                    method=outlier_config['method'],
+                    contamination=outlier_config['contamination']
+                )
+                
+                # Clean anomalous data
+                if self.config.get('remove_anomalies', False):
+                    df = df[~df['is_anomaly']].copy()
+                    df = df.drop('is_anomaly', axis=1)
+                
+                self.pipeline_steps.append({
+                    "step": "handle_outliers",
+                    "method": outlier_config['method'],
+                    "removed": self.config.get('remove_anomalies', False)
+                })
+            
+            # Add time features if configured
+            if self.config.get('add_time_features', True):  # Default to True for backward compatibility
+                date_column = self.config.get('date_column', 'date')
+                df = self.add_time_features(df, date_column)
+                self.pipeline_steps.append({"step": "add_time_features"})
+            
+            # Add lag features if configured
+            if self.config.get('add_lag_features', True):  # Default to True for backward compatibility
+                lag_periods = self.config.get('lag_features', [1, 2, 3, 24, 48])
+                df = self.add_lag_features(df, target_column, lag_periods)
+                self.pipeline_steps.append({
+                    "step": "add_lag_features",
+                    "lags": lag_periods
+                })
+            
+            # Add rolling features if configured
+            if self.config.get('add_rolling_features', True):  # Default to True for backward compatibility
+                windows = self.config.get('rolling_windows', [6, 12, 24])
+                functions = self.config.get('rolling_functions', ['mean', 'std'])
+                df = self.add_rolling_features(df, target_column, windows, functions)
+                self.pipeline_steps.append({
+                    "step": "add_rolling_features",
+                    "windows": windows,
+                    "functions": functions
+                })
+            
+            # Scale features if configured
+            if self.config.get('scale_features', False):
+                columns_to_scale = self.config.get('columns_to_scale', [col for col in df.columns if col != target_column])
+                scaling_method = self.config.get('scaling_method', 'standard')
+                df = self.scale_features(df)
+                self.pipeline_steps.append({
+                    "step": "scale_features",
+                    "method": scaling_method,
+                    "columns": columns_to_scale
+                })
+            
+            # Log preprocessing steps
+            self.tracker.log_preprocessing_config({
+                "preprocessing_steps": self.pipeline_steps,
+                "total_steps": len(self.pipeline_steps),
+                "target_column": target_column,
+                "create_sequences": create_sequences,
+                "seq_length": seq_length if create_sequences else None
+            })
+            
+            logger.info("Data preparation completed successfully")
+            
+            # Create sequences if requested
+            if create_sequences:
+                feature_columns = [col for col in df.columns if col != target_column]
+                X = df[feature_columns].values
+                y = df[target_column].values
+                X_seq, y_seq = self.create_sequences(X, seq_length)
+                return X_seq, y_seq
+            
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error in data preparation: {str(e)}")
+            raise
 
     def remove_outliers(self, data: pd.DataFrame, column: str, method: str = 'zscore',
                        threshold: float = 3.0) -> pd.DataFrame:
@@ -193,102 +290,6 @@ class DataPreprocessor:
             return data
         except Exception as e:
             logger.error(f"Error scaling features: {str(e)}")
-            raise
-
-    def prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Prepare data for modeling with outlier and anomaly detection."""
-        logger.info("Starting data preparation")
-        try:
-            # Track preprocessing steps
-            self.pipeline_steps = []
-            
-            # Handle missing values if configured
-            if self.config.get('handle_missing_values', False):
-                method = self.config.get('missing_values_method', 'interpolate')
-                df = self.handle_missing_values(df, method)
-                self.pipeline_steps.append({"step": "handle_missing_values", "method": method})
-            
-            # Handle outliers and anomalies if configured
-            if self.config.get('handle_outliers', False):
-                outlier_config = self.config.get('outlier_config', {
-                    'method': 'isolation_forest',
-                    'contamination': 0.1,
-                    'target_column': 'value'
-                })
-                
-                from .advanced_preprocessing import AdvancedPreprocessor
-                advanced_preprocessor = AdvancedPreprocessor(
-                    config=outlier_config,
-                    experiment_name=self.tracker.experiment_name,
-                    run_name=self.tracker.run_name
-                )
-                
-                # Detect and handle anomalies
-                df = advanced_preprocessor.detect_anomalies(
-                    data=df,
-                    target_column=outlier_config['target_column'],
-                    method=outlier_config['method'],
-                    contamination=outlier_config['contamination']
-                )
-                
-                # Clean anomalous data
-                if self.config.get('remove_anomalies', False):
-                    df = df[~df['is_anomaly']].copy()
-                    df = df.drop('is_anomaly', axis=1)
-                
-                self.pipeline_steps.append({
-                    "step": "handle_outliers",
-                    "method": outlier_config['method'],
-                    "removed": self.config.get('remove_anomalies', False)
-                })
-            
-            # Add time features if configured
-            if self.config.get('add_time_features', False):
-                df = self.add_time_features(df)
-                self.pipeline_steps.append({"step": "add_time_features"})
-            
-            # Add lag features if configured
-            if self.config.get('add_lag_features', False):
-                lag_features = self.config.get('lag_features', [1, 2, 3])
-                df = self.add_lag_features(df, 'value', lag_features)
-                self.pipeline_steps.append({
-                    "step": "add_lag_features",
-                    "lags": lag_features
-                })
-            
-            # Add rolling features if configured
-            if self.config.get('add_rolling_features', False):
-                windows = self.config.get('rolling_windows', [24, 168])
-                functions = self.config.get('rolling_functions', ['mean', 'std'])
-                df = self.add_rolling_features(df, 'value', windows, functions)
-                self.pipeline_steps.append({
-                    "step": "add_rolling_features",
-                    "windows": windows,
-                    "functions": functions
-                })
-            
-            # Scale features if configured
-            if self.config.get('scale_features', False):
-                columns_to_scale = self.config.get('columns_to_scale', ['value'])
-                scaling_method = self.config.get('scaling_method', 'standard')
-                df = self.scale_features(df)
-                self.pipeline_steps.append({
-                    "step": "scale_features",
-                    "method": scaling_method,
-                    "columns": columns_to_scale
-                })
-            
-            # Log preprocessing steps
-            self.tracker.log_preprocessing_config({
-                "preprocessing_steps": self.pipeline_steps,
-                "total_steps": len(self.pipeline_steps)
-            })
-            
-            logger.info("Data preparation completed successfully")
-            return df
-            
-        except Exception as e:
-            logger.error(f"Error in data preparation: {str(e)}")
             raise
 
     def _log_data_stats(self, data, prefix=""):
