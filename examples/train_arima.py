@@ -26,6 +26,14 @@ def main():
         with open('config/config.json', 'r') as f:
             config = json.load(f)
         
+        # Store initial configuration for summary
+        initial_config = {
+            'preprocessing': config['preprocessing'].copy(),
+            'model': config['model'].copy(),
+            'mlflow': config['mlflow'].copy(),
+            'paths': config['paths'].copy()
+        }
+        
         # Initialize logger and MLflow tracker
         logger.info(f"Initializing MLflow tracker for experiment: {config['mlflow']['experiment_name']}")
         tracker = ARIMATracker(experiment_name=config['mlflow']['experiment_name'])
@@ -50,24 +58,25 @@ def main():
         # Rename columns to match ARIMA model expectations
         df = df.rename(columns={'date': 'timestamp', 'value': 'consumption'})
         
-        # Split data into training and test sets
-        train_size = int(len(df) * config['model']['train_test_split'])
+        # Split data into train and test sets
+        train_size = int(len(df) * 0.8)
         train_data = df[:train_size]
         test_data = df[train_size:]
         logger.info(f"Split data into {len(train_data)} training and {len(test_data)} test samples")
         
-        # Train and evaluate models
+        # Grid search for ARIMA parameters
         best_model = None
         best_aic = float('inf')
-        best_params = None
-        best_results = None
+        best_config = None
         
-        param_grid = config['model']['grid_search']
-        for p in param_grid['p']:
-            for d in param_grid['d']:
-                for q in param_grid['q']:
-                    # Start a new run for this configuration
-                    run_name = f"arima_p{p}_d{d}_q{q}_{parent_run_id[:8] if parent_run_id else ''}"
+        # Store results for each model
+        model_results = []
+        
+        for p in range(1, 4):
+            for d in [1]:  # Fixed d=1 for first-order differencing
+                for q in range(1, 3):
+                    run_name = f"arima_p{p}_d{d}_q{q}"
+                    
                     with mlflow.start_run(run_name=run_name, nested=True):
                         logger.info(f"Training ARIMA model with p={p}, d={d}, q={q}")
                         
@@ -97,99 +106,152 @@ def main():
                             'hqic': hqic
                         })
                         
-                        # Update best model if AIC is lower
+                        # Store results
+                        model_results.append({
+                            'p': p,
+                            'd': d,
+                            'q': q,
+                            'aic': aic,
+                            'bic': bic,
+                            'hqic': hqic
+                        })
+                        
+                        # Update best model if current model has lower AIC
                         if aic < best_aic:
+                            logger.info(f"New best model found with AIC: {aic}")
                             best_aic = aic
                             best_model = model
-                            best_params = (p, d, q)
-                            best_results = results
-                            logger.info(f"New best model found with AIC: {aic}")
-                            
-                            # Save best model
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            model_dir = f"{config['paths']['models_dir']}/arima_p{p}_d{d}_q{q}/{timestamp}"
-                            os.makedirs(f"{model_dir}/model", exist_ok=True)
-                            os.makedirs(f"{model_dir}/analysis", exist_ok=True)
-                            model.save_model(f"{model_dir}/model/arima_model.joblib")
+                            best_config = model_config.copy()
         
-        if best_model is not None:
-            # Generate predictions
-            predictions, (lower, upper) = best_model.predict(test_data)
-            
-            # Calculate and log performance metrics
-            metrics = best_model.evaluate(test_data['consumption'].values, predictions)
-            tracker.log_training_metrics(metrics)
-            
-            # Create directories for results
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            model_name = f"arima_p{best_params[0]}_d{best_params[1]}_q{best_params[2]}"
-            base_dir = os.path.join(config['paths']['models_dir'], model_name, timestamp)
-            analysis_dir = os.path.join(base_dir, config['paths']['analysis_dir'])
-            os.makedirs(analysis_dir, exist_ok=True)
-            
-            # Save the best model
-            model_path = os.path.join(base_dir, 'model', 'arima_model.joblib')
-            os.makedirs(os.path.dirname(model_path), exist_ok=True)
-            best_model.save_model(model_path)
-            
-            # Analyze best model results using the utility function
-            analysis_metrics = analyze_model_results(
-                actual=test_data['consumption'].values,
-                predicted=predictions,
-                dates=test_data['timestamp'].values,
-                confidence_intervals=(lower, upper),
-                output_dir=analysis_dir
-            )
-            
-            # Save predictions and confidence intervals
-            results_df = pd.DataFrame({
-                'timestamp': test_data['timestamp'],
-                'actual': test_data['consumption'],
-                'predicted': predictions,
-                'lower_bound': lower,
-                'upper_bound': upper
+        # Generate predictions with best model
+        logger.info(f"Generating predictions for test data with {len(test_data)} steps")
+        predictions, (lower, upper) = best_model.predict(len(test_data))
+        
+        # Evaluate model performance
+        logger.info("Evaluating model performance")
+        metrics = best_model.evaluate(test_data['consumption'].values, predictions)
+        
+        # Save best model and results
+        model_path = f"data/models/arima_p{best_config['p']}_d{best_config['d']}_q{best_config['q']}/{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        os.makedirs(os.path.join(model_path, "model"), exist_ok=True)
+        best_model.save_model(os.path.join(model_path, "model", "arima_model.joblib"))
+        logger.info(f"Best model saved successfully")
+        
+        # Log final results
+        run_name = f"best_model_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        with mlflow.start_run(run_name=run_name, nested=True):
+            mlflow.log_params(best_config)
+            mlflow.log_metrics({
+                'best_aic': best_aic,
+                'rmse': metrics['rmse'],
+                'mae': metrics['mae'],
+                'mape': metrics['mape']
             })
-            results_df.to_csv(os.path.join(analysis_dir, 'predictions.csv'), index=False)
-            
-            # Create model summary with all configurations
-            summary = {
-                'model_name': model_name,
-                'timestamp': timestamp,
-                'parameters': {
-                    'p': best_params[0],
-                    'd': best_params[1],
-                    'q': best_params[2]
+        
+        # Analyze results
+        logger.info("Analyzing model results")
+        analysis_path = os.path.join(model_path, "analysis")
+        os.makedirs(analysis_path, exist_ok=True)
+        
+        # Generate and save analysis plots
+        analyze_model_results(
+            test_data['consumption'].values,
+            predictions,
+            test_data['timestamp'].values,
+            (lower, upper),
+            analysis_path
+        )
+        
+        # Create comprehensive model summary
+        model_summary = {
+            'initial_configuration': initial_config,
+            'training_details': {
+                'train_samples': len(train_data),
+                'test_samples': len(test_data),
+                'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'grid_search_space': {
+                    'p': list(range(1, 4)),
+                    'd': [1],
+                    'q': list(range(1, 3))
                 },
-                'metrics': {
-                    **metrics,  # Training metrics (mse, rmse, mae, mape)
-                    'r2': analysis_metrics['r2'],  # Additional evaluation metric
-                    'aic': best_aic,  # Best AIC from model selection
-                    'bic': best_results['bic'],  # BIC from best model
-                    'hqic': best_results['hqic']  # HQIC from best model
+                'models_evaluated': len(model_results),
+                'model_results': model_results
+            },
+            'best_model': {
+                'parameters': best_config,
+                'performance': {
+                    'aic': float(best_aic),
+                    'metrics': {
+                        'rmse': float(metrics['rmse']),
+                        'mae': float(metrics['mae']),
+                        'mape': float(metrics['mape']),
+                        'r2': float(metrics['r2']),
+                        'directional_accuracy': float(metrics['directional_accuracy'])
+                    },
+                    'residuals_analysis': {
+                        'mean': float(metrics['residuals_mean']),
+                        'std': float(metrics['residuals_std']),
+                        'skewness': float(metrics['residuals_skewness']),
+                        'kurtosis': float(metrics['residuals_kurtosis']),
+                        'autocorrelation': float(metrics['residuals_autocorrelation']),
+                        'normal_distribution': bool(metrics['residuals_normal']),
+                        'independent': bool(metrics['residuals_independent'])
+                    }
                 },
-                'data_info': {
-                    'train_samples': len(train_data),
-                    'test_samples': len(test_data),
-                    'features': list(train_data.columns)
-                },
-                'preprocessing_config': config['preprocessing'],
-                'model_config': config['model'],
-                'analysis_config': config['analysis']
+                'artifacts': {
+                    'model_path': os.path.join(model_path, "model", "arima_model.joblib"),
+                    'analysis_path': analysis_path,
+                    'plots': [
+                        'actual_vs_predicted.png',
+                        'residuals_analysis.png',
+                        'metrics_over_time.png',
+                        'seasonal_decomposition.png'
+                    ]
+                }
+            },
+            'preprocessing_pipeline': preprocessor.pipeline_steps,
+            'mlflow_tracking': {
+                'experiment_name': config['mlflow']['experiment_name'],
+                'parent_run_id': parent_run_id,
+                'best_model_run_name': run_name
             }
-            
-            # Save model summary
-            with open(os.path.join(analysis_dir, 'model_summary.json'), 'w') as f:
-                json.dump(summary, f, indent=4)
-            
-            logger.info(f"Model and all related files saved to {base_dir}/")
-            logger.info(f"MLflow tracking UI available at: {config['mlflow']['tracking_uri']}")
-            
-        else:
-            logger.error("No successful model found during grid search")
-            
+        }
+        
+        # Save comprehensive model summary
+        with open(os.path.join(model_path, "model_summary.json"), 'w') as f:
+            json.dump(model_summary, f, indent=4)
+        logger.info(f"Saved comprehensive model summary to {os.path.join(model_path, 'model_summary.json')}")
+        
+        # Save metrics summary (keeping this for backward compatibility)
+        metrics_summary = {
+            'best_model': {
+                'p': best_config['p'],
+                'd': best_config['d'],
+                'q': best_config['q'],
+                'aic': float(best_aic),
+                'metrics': {
+                    'rmse': float(metrics['rmse']),
+                    'mae': float(metrics['mae']),
+                    'mape': float(metrics['mape']),
+                    'r2': float(metrics['r2']),
+                    'directional_accuracy': float(metrics['directional_accuracy']),
+                    'residuals_mean': float(metrics['residuals_mean']),
+                    'residuals_std': float(metrics['residuals_std']),
+                    'residuals_skewness': float(metrics['residuals_skewness']),
+                    'residuals_kurtosis': float(metrics['residuals_kurtosis']),
+                    'residuals_autocorrelation': float(metrics['residuals_autocorrelation']),
+                    'residuals_normal': bool(metrics['residuals_normal']),
+                    'residuals_independent': bool(metrics['residuals_independent'])
+                }
+            }
+        }
+        
+        with open(os.path.join(analysis_path, "metrics_summary.json"), 'w') as f:
+            json.dump(metrics_summary, f, indent=4)
+        
     except Exception as e:
         logger.error(f"Error in ARIMA optimization: {str(e)}")
         raise
 
 if __name__ == "__main__":
-    main() 
+    main()

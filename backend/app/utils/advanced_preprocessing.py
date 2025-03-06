@@ -10,6 +10,7 @@ from scipy import stats
 import matplotlib.pyplot as plt
 from ..utils.logger import Logger
 from .trackers import PreprocessorTracker
+from datetime import datetime
 
 logger = Logger()
 
@@ -30,97 +31,92 @@ class AdvancedPreprocessor:
         self.anomaly_detectors = {}
         self.cleaning_history = []
     
-    def detect_anomalies(self, 
-                        data: pd.DataFrame,
-                        target_column: str,
-                        method: str = 'isolation_forest',
-                        window: int = 24,
-                        threshold: float = 3.0,
-                        contamination: float = 0.1) -> pd.DataFrame:
-        """Detect anomalies with tracking."""
-        try:
-            self.logger.info(f"Detecting anomalies using {method} method")
-            
-            with self.tracker.start_tracking("anomaly_detection"):
-                # Log configuration
-                self.logger.info("Logging preprocessing configuration")
-                self.logger.info(f"Logging parameters: {self.config}")
-                self.tracker.log_preprocessing_config(self.config)
-                
-                if method == 'rolling_stats':
-                    anomalies = self._detect_rolling_stats_anomalies(
-                        data, target_column, window, threshold
-                    )
-                elif method == 'isolation_forest':
-                    anomalies = self._detect_isolation_forest_anomalies(
-                        data, target_column, contamination
-                    )
-                elif method == 'one_class_svm':
-                    anomalies = self._detect_svm_anomalies(
-                        data, target_column, contamination
-                    )
-                elif method == 'lof':
-                    anomalies = self._detect_lof_anomalies(
-                        data, target_column, contamination
-                    )
-                else:
-                    raise ValueError(f"Unsupported anomaly detection method: {method}")
-                
-                # Add anomaly column
-                data['is_anomaly'] = anomalies == -1
-                
-                # Log results
-                n_anomalies = sum(data['is_anomaly'])
-                anomaly_percentage = (n_anomalies / len(data)) * 100
-                
-                self.tracker.log_model_params({
-                    'anomaly_detection_method': method,
-                    'n_anomalies': n_anomalies,
-                    'anomaly_percentage': anomaly_percentage,
-                    'window': self.config.get('window', None),
-                    'threshold': self.config.get('threshold', None),
-                    'contamination': contamination
-                })
-                
-                self.pipeline_steps.append({
-                    "step": "detect_anomalies",
-                    "method": method,
-                    "n_anomalies": n_anomalies,
-                    "anomaly_percentage": anomaly_percentage
-                })
-                
-                return data
-                
-        except Exception as e:
-            self.logger.error(f"Error detecting anomalies: {str(e)}")
-            raise
+    @property
+    def experiment_name(self) -> str:
+        """Get the experiment name from the tracker."""
+        return self.tracker.experiment_name
     
-    def clean_data(self, 
-                  data: pd.DataFrame,
-                  target_column: str,
-                  features: List[str] = None) -> pd.DataFrame:
-        """Clean data by handling anomalies with tracking."""
-        try:
-            self.logger.info("Cleaning data by handling anomalies")
+    def process_anomalies(self, 
+                         data: pd.DataFrame,
+                         target_column: str,
+                         features: List[str] = None,
+                         method: str = 'isolation_forest',
+                         window: int = 24,
+                         threshold: float = 3.0,
+                         contamination: float = 0.1,
+                         handle_anomalies: bool = True) -> pd.DataFrame:
+        """Detect and optionally clean anomalies in the data.
+        
+        Args:
+            data: Input DataFrame
+            target_column: Primary column for anomaly detection
+            features: List of features to clean (defaults to [target_column])
+            method: Anomaly detection method ('isolation_forest', 'one_class_svm', 'lof', 'rolling_stats')
+            window: Window size for rolling statistics method
+            threshold: Threshold for rolling statistics method
+            contamination: Contamination ratio for isolation forest and one-class SVM
+            handle_anomalies: Whether to clean detected anomalies
             
-            with self.tracker.start_tracking("data_cleaning"):
-                if features is None:
-                    features = [target_column]
-                
-                # Store original statistics
-                original_stats = {
-                    feature: data[feature].describe().to_dict()
-                    for feature in features
+        Returns:
+            DataFrame with detected and optionally cleaned anomalies
+        """
+        try:
+            self.logger.info(f"Processing anomalies using {method} method")
+            data = data.copy()
+            
+            if features is None:
+                features = [target_column]
+            
+            # Store original statistics
+            original_stats = {
+                feature: data[feature].describe().to_dict()
+                for feature in features
+            }
+            
+            # Detect anomalies
+            if method == 'rolling_stats':
+                anomalies = self._detect_rolling_stats_anomalies(
+                    data, target_column, window, threshold
+                )
+            elif method == 'isolation_forest':
+                anomalies = self._detect_isolation_forest_anomalies(
+                    data, target_column, contamination
+                )
+            elif method == 'one_class_svm':
+                anomalies = self._detect_svm_anomalies(
+                    data, target_column, contamination
+                )
+            elif method == 'lof':
+                anomalies = self._detect_lof_anomalies(
+                    data, target_column, contamination
+                )
+            else:
+                raise ValueError(f"Unsupported anomaly detection method: {method}")
+            
+            # Add anomaly column
+            data['is_anomaly'] = anomalies == -1
+            n_anomalies = sum(data['is_anomaly'])
+            anomaly_percentage = (n_anomalies / len(data)) * 100
+            
+            # Log anomaly detection stats
+            self.tracker.log_anomaly_detection_stats(
+                method=method,
+                n_anomalies=n_anomalies,
+                anomaly_percentage=anomaly_percentage,
+                params={
+                    'window': window if method == 'rolling_stats' else None,
+                    'threshold': threshold if method == 'rolling_stats' else None,
+                    'contamination': contamination if method in ['isolation_forest', 'one_class_svm'] else None
                 }
+            )
+            
+            # Handle anomalies if requested
+            if handle_anomalies and n_anomalies > 0:
+                anomaly_indices = data[data['is_anomaly']].index
                 
-                # Handle anomalies based on configuration
-                if self.config.get('clean_anomalies', True):
-                    # Get anomaly indices
-                    anomaly_indices = data[data['is_anomaly']].index
-                    
-                    # For each feature, interpolate anomalies
-                    for feature in features:
-                        data.loc[anomaly_indices, feature] = data[feature].interpolate(method='linear')
+                # For each feature, interpolate anomalies
+                for feature in features:
+                    data.loc[anomaly_indices, feature] = data[feature].interpolate(method='linear')
                 
                 # Store cleaned statistics
                 cleaned_stats = {
@@ -129,24 +125,39 @@ class AdvancedPreprocessor:
                 }
                 
                 # Log cleaning results
-                self.tracker.log_model_params({
-                    'anomaly_handling_method': 'interpolate',
-                    'features_cleaned': features,
-                    'n_anomalies_handled': len(anomaly_indices),
-                    'original_stats': original_stats,
-                    'cleaned_stats': cleaned_stats
+                self.tracker.log_params_safely({
+                    'preprocessing.anomalies.cleaning_method': 'interpolate',
+                    'preprocessing.anomalies.cleaned_features': features,
+                    'preprocessing.anomalies.n_cleaned': len(anomaly_indices),
+                    'preprocessing.anomalies.original_stats': original_stats,
+                    'preprocessing.anomalies.cleaned_stats': cleaned_stats
                 })
                 
-                self.pipeline_steps.append({
-                    "step": "clean_data",
-                    "method": 'interpolate',
-                    "features_cleaned": features
+                # Update cleaning history
+                self.cleaning_history.append({
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'method': method,
+                    'cleaning_method': 'interpolate',
+                    'features': features,
+                    'total_points': len(data),
+                    'anomalies_detected': n_anomalies,
+                    'anomaly_percentage': anomaly_percentage
                 })
-                
-                return data
-                
+            
+            # Add to pipeline steps
+            self.pipeline_steps.append({
+                "step": "anomaly_processing",
+                "detection_method": method,
+                "n_anomalies": n_anomalies,
+                "anomaly_percentage": anomaly_percentage,
+                "handled_anomalies": handle_anomalies,
+                "features_processed": features
+            })
+            
+            return data
+            
         except Exception as e:
-            self.logger.error(f"Error cleaning data: {str(e)}")
+            self.logger.error(f"Error in anomaly processing: {str(e)}")
             raise
     
     def _detect_rolling_stats_anomalies(self,

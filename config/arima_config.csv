@@ -1,2 +1,0 @@
-handle_missing_values,missing_values_method,handle_outliers,outlier_config,remove_anomalies,add_time_features,add_lag_features,lag_features,add_rolling_features,rolling_windows,rolling_functions,scale_features,scaling_method,columns_to_scale
-True,interpolate,True,"{'method': 'isolation_forest', 'contamination': 0.1, 'target_column': 'value'}",True,True,True,"[1, 2, 3, 24, 168]",True,"[24, 168]","['mean', 'std', 'min', 'max']",True,standard,"['value', 'temperature', 'humidity']"

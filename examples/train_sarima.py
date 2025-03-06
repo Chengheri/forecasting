@@ -7,440 +7,441 @@ import numpy as np
 from datetime import datetime
 import mlflow
 import matplotlib.pyplot as plt
-import seaborn as sns
-from statsmodels.tsa.seasonal import seasonal_decompose
-from statsmodels.tsa.stattools import acf
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from statsmodels.tsa.stattools import acf, pacf
 from backend.app.models.arima_model import TimeSeriesModel
-from backend.app.utils.model_trackers import ARIMATracker
+from backend.app.utils.trackers import ARIMATracker
 from backend.app.utils.logger import Logger
 from backend.app.utils.preprocessing import DataPreprocessor
+from backend.app.utils.advanced_preprocessing import AdvancedPreprocessor
+from backend.app.utils.analysis_utils import (
+    analyze_time_series,
+    get_suggested_parameters,
+    analyze_model_results,
+    plot_actual_vs_predicted,
+    plot_residuals_analysis,
+    plot_metrics_over_time,
+    plot_seasonal_decomposition
+)
+from backend.app.utils.decorators import log_execution_time
 import json
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+import joblib
+from typing import Dict, Any
 
 # Initialize logger
 logger = Logger()
 
-def plot_actual_vs_predicted(actual, predicted, dates, confidence_intervals=None):
-    """Plot actual vs predicted values with confidence intervals."""
-    plt.figure(figsize=(15, 7))
-    plt.plot(dates, actual, label='Actual', color='blue', alpha=0.7)
-    plt.plot(dates, predicted, label='Predicted', color='red', linestyle='--')
+def create_model_summary(initial_config: dict, train_data: pd.DataFrame, test_data: pd.DataFrame,
+                      model_params: dict, metrics: dict, analysis_results: dict,
+                      stationarity_results: dict, model_path: str, analysis_path: str,
+                      grid_search_results: dict = None, preprocessor=None, use_grid_search: bool = False) -> dict:
+    """Create a comprehensive model summary with consistent structure.
     
-    if confidence_intervals is not None:
-        lower, upper = confidence_intervals
-        plt.fill_between(dates, lower, upper, color='red', alpha=0.1, label='95% CI')
-    
-    plt.title('Actual vs Predicted Values')
-    plt.xlabel('Date')
-    plt.ylabel('Value')
-    plt.legend()
-    plt.grid(True)
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    return plt.gcf()
-
-def plot_residuals_analysis(actual, predicted, dates):
-    """Create comprehensive residuals analysis plots."""
-    residuals = actual - predicted
-    
-    fig, axes = plt.subplots(3, 2, figsize=(15, 15))
-    
-    # Time series of residuals
-    axes[0, 0].plot(dates, residuals)
-    axes[0, 0].set_title('Residuals over Time')
-    axes[0, 0].set_xlabel('Date')
-    axes[0, 0].set_ylabel('Residual')
-    axes[0, 0].grid(True)
-    
-    # Histogram of residuals
-    sns.histplot(residuals, kde=True, ax=axes[0, 1])
-    axes[0, 1].set_title('Residuals Distribution')
-    axes[0, 1].set_xlabel('Residual')
-    
-    # Q-Q plot
-    from scipy import stats
-    stats.probplot(residuals, dist="norm", plot=axes[1, 0])
-    axes[1, 0].set_title('Q-Q Plot')
-    
-    # Residuals vs Predicted
-    axes[1, 1].scatter(predicted, residuals, alpha=0.5)
-    axes[1, 1].set_title('Residuals vs Predicted')
-    axes[1, 1].set_xlabel('Predicted Values')
-    axes[1, 1].set_ylabel('Residuals')
-    axes[1, 1].grid(True)
-    
-    # ACF plot of residuals
-    plot_acf(residuals, ax=axes[2, 0], lags=40)
-    axes[2, 0].set_title('Autocorrelation of Residuals')
-    
-    # PACF plot of residuals
-    plot_pacf(residuals, ax=axes[2, 1], lags=40)
-    axes[2, 1].set_title('Partial Autocorrelation of Residuals')
-    
-    plt.tight_layout()
-    return fig
-
-def plot_metrics_over_time(actual, predicted, dates, window=24):
-    """Plot rolling metrics over time."""
-    # Calculate rolling metrics using numpy arrays
-    rolling_rmse = []
-    rolling_mae = []
-    rolling_mape = []
-    
-    for i in range(len(actual)):
-        start_idx = max(0, i - window + 1)
-        act_window = actual[start_idx:i+1]
-        pred_window = predicted[start_idx:i+1]
+    Args:
+        initial_config: Initial configuration dictionary
+        train_data: Training data
+        test_data: Test data
+        model_params: Model parameters
+        metrics: Model metrics
+        analysis_results: Analysis results
+        stationarity_results: Stationarity analysis results
+        model_path: Path where model is saved
+        analysis_path: Path where analysis results are saved
+        grid_search_results: Optional grid search results
+        preprocessor: Optional preprocessor object
+        use_grid_search: Whether grid search was used for parameter selection
         
-        if len(act_window) > 0:
-            mse = mean_squared_error(act_window, pred_window)
-            mae = mean_absolute_error(act_window, pred_window)
-            mape = np.mean(np.abs((act_window - pred_window) / act_window)) * 100
-            rolling_rmse.append(np.sqrt(mse))
-            rolling_mae.append(mae)
-            rolling_mape.append(mape)
-        else:
-            rolling_rmse.append(np.nan)
-            rolling_mae.append(np.nan)
-            rolling_mape.append(np.nan)
-    
-    fig, axes = plt.subplots(3, 1, figsize=(15, 15))
-    
-    # Plot rolling RMSE
-    axes[0].plot(dates, rolling_rmse, label='Rolling RMSE')
-    axes[0].set_title(f'Rolling RMSE (window={window})')
-    axes[0].set_xlabel('Date')
-    axes[0].set_ylabel('RMSE')
-    axes[0].grid(True)
-    axes[0].legend()
-    
-    # Plot rolling MAE
-    axes[1].plot(dates, rolling_mae, label='Rolling MAE', color='orange')
-    axes[1].set_title(f'Rolling MAE (window={window})')
-    axes[1].set_xlabel('Date')
-    axes[1].set_ylabel('MAE')
-    axes[1].grid(True)
-    axes[1].legend()
-    
-    # Plot rolling MAPE
-    axes[2].plot(dates, rolling_mape, label='Rolling MAPE', color='green')
-    axes[2].set_title(f'Rolling MAPE (window={window})')
-    axes[2].set_xlabel('Date')
-    axes[2].set_ylabel('MAPE (%)')
-    axes[2].grid(True)
-    axes[2].legend()
-    
-    plt.tight_layout()
-    return fig
+    Returns:
+        Dictionary containing model summary
+    """
+    # Convert numpy numbers to native Python types
+    def convert_to_native_types(obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8, np.int16, np.int32,
+                          np.int64, np.uint8, np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+            return float(obj)
+        elif isinstance(obj, dict):
+            return {key: convert_to_native_types(value) for key, value in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [convert_to_native_types(item) for item in obj]
+        return obj
 
-def plot_seasonal_decomposition(data, dates, period=24):
-    """Plot seasonal decomposition with additional analysis."""
-    # Create time series
-    ts = pd.Series(data, index=dates)
-    
-    # Perform seasonal decomposition
-    decomposition = seasonal_decompose(ts, period=period)
-    
-    # Plot decomposition
-    fig, axes = plt.subplots(5, 1, figsize=(15, 15))
-    
-    # Original
-    axes[0].plot(dates, decomposition.observed)
-    axes[0].set_title('Original Time Series')
-    axes[0].grid(True)
-    
-    # Trend
-    axes[1].plot(dates, decomposition.trend)
-    axes[1].set_title('Trend')
-    axes[1].grid(True)
-    
-    # Seasonal
-    axes[2].plot(dates, decomposition.seasonal)
-    axes[2].set_title('Seasonal')
-    axes[2].grid(True)
-    
-    # Residual
-    axes[3].plot(dates, decomposition.resid)
-    axes[3].set_title('Residual')
-    axes[3].grid(True)
-    
-    # Seasonal Pattern
-    seasonal_pattern = pd.DataFrame(decomposition.seasonal).iloc[:period]
-    axes[4].plot(range(len(seasonal_pattern)), seasonal_pattern.values)
-    axes[4].set_title('Seasonal Pattern (One Period)')
-    axes[4].set_xlabel('Hour of Day')
-    axes[4].grid(True)
-    
-    plt.tight_layout()
-    return fig
-
-def analyze_best_model_results(actual, predicted, dates, confidence_intervals, output_dir):
-    """Analyze and visualize best model results."""
-    logger.info("Analyzing best model results")
-    
-    # Create analysis directory
-    analysis_dir = output_dir
-    os.makedirs(analysis_dir, exist_ok=True)
-    
-    # 1. Actual vs Predicted plot
-    fig_pred = plot_actual_vs_predicted(actual, predicted, dates, confidence_intervals)
-    pred_path = os.path.join(analysis_dir, 'actual_vs_predicted.png')
-    fig_pred.savefig(pred_path)
-    plt.close(fig_pred)
-    logger.info(f"Saved actual vs predicted plot to {pred_path}")
-    
-    # 2. Residuals analysis
-    fig_resid = plot_residuals_analysis(actual, predicted, dates)
-    resid_path = os.path.join(analysis_dir, 'residuals_analysis.png')
-    fig_resid.savefig(resid_path)
-    plt.close(fig_resid)
-    logger.info(f"Saved residuals analysis to {resid_path}")
-    
-    # 3. Metrics over time
-    fig_metrics = plot_metrics_over_time(actual, predicted, dates)
-    metrics_path = os.path.join(analysis_dir, 'metrics_over_time.png')
-    fig_metrics.savefig(metrics_path)
-    plt.close(fig_metrics)
-    logger.info(f"Saved metrics over time plot to {metrics_path}")
-    
-    # 4. Seasonal decomposition
-    fig_seasonal = plot_seasonal_decomposition(actual, dates)
-    seasonal_path = os.path.join(analysis_dir, 'seasonal_decomposition.png')
-    fig_seasonal.savefig(seasonal_path)
-    plt.close(fig_seasonal)
-    logger.info(f"Saved seasonal decomposition to {seasonal_path}")
-    
-    # Calculate additional metrics
-    mse = mean_squared_error(actual, predicted)
-    rmse = np.sqrt(mse)
-    mae = mean_absolute_error(actual, predicted)
-    r2 = r2_score(actual, predicted)
-    mape = np.mean(np.abs((actual - predicted) / actual)) * 100
-    
-    # Calculate seasonal metrics
-    seasonal_rmse = []
-    seasonal_mae = []
-    for hour in range(24):
-        hour_mask = pd.to_datetime(dates).hour == hour
-        hour_actual = actual[hour_mask]
-        hour_predicted = predicted[hour_mask]
-        seasonal_rmse.append(np.sqrt(mean_squared_error(hour_actual, hour_predicted)))
-        seasonal_mae.append(mean_absolute_error(hour_actual, hour_predicted))
-    
-    # Save metrics summary
-    metrics_summary = {
-        'rmse': rmse,
-        'mae': mae,
-        'r2': r2,
-        'mse': mse,
-        'mape': mape,
-        'avg_seasonal_rmse': np.mean(seasonal_rmse),
-        'avg_seasonal_mae': np.mean(seasonal_mae),
-        'max_seasonal_rmse': np.max(seasonal_rmse),
-        'min_seasonal_rmse': np.min(seasonal_rmse)
+    model_summary = {
+        'initial_configuration': initial_config,
+        'training_details': {
+            'train_samples': int(len(train_data)),
+            'test_samples': int(len(test_data)),
+            'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'parameter_selection_method': 'grid_search' if use_grid_search else 'suggested_parameters'
+        },
+        'best_model': {
+            'parameters': convert_to_native_types(model_params),
+            'performance': {
+                'aic': float(metrics.get('aic', 0)),
+                'bic': float(metrics.get('bic', 0)),
+                'hqic': float(metrics.get('hqic', 0)),
+                'metrics': {
+                    'rmse': float(analysis_results.get('rmse', 0)),
+                    'mae': float(analysis_results.get('mae', 0)),
+                    'mape': float(analysis_results.get('mape', 0)),
+                    'r2': float(analysis_results.get('r2', 0)),
+                    'directional_accuracy': float(analysis_results.get('directional_accuracy', 0))
+                },
+                'residuals_analysis': {
+                    'mean': float(analysis_results.get('residuals_mean', 0)),
+                    'std': float(analysis_results.get('residuals_std', 0)),
+                    'skewness': float(analysis_results.get('residuals_skewness', 0)),
+                    'kurtosis': float(analysis_results.get('residuals_kurtosis', 0)),
+                    'autocorrelation': float(analysis_results.get('residuals_autocorrelation', 0)),
+                    'normal_distribution': bool(analysis_results.get('residuals_normal', False)),
+                    'independent': bool(analysis_results.get('residuals_independent', False))
+                }
+            },
+            'artifacts': {
+                'model_path': model_path,
+                'analysis_path': analysis_path,
+                'plots': [
+                    'actual_vs_predicted.png',
+                    'residuals_analysis.png',
+                    'metrics_over_time.png',
+                    'seasonal_decomposition.png',
+                    'acf_pacf_analysis.png'
+                ]
+            }
+        },
+        'stationarity_analysis': convert_to_native_types(stationarity_results)
     }
     
-    metrics_df = pd.DataFrame([metrics_summary])
-    metrics_df.to_csv(os.path.join(analysis_dir, 'metrics_summary.csv'), index=False)
-    logger.info(f"Saved metrics summary to {analysis_dir}/metrics_summary.csv")
+    # Add grid search details if available
+    if grid_search_results:
+        model_summary['training_details'].update({
+            'grid_search_space': convert_to_native_types(grid_search_results.get('param_grid', {})),
+            'models_evaluated': int(grid_search_results.get('total_combinations_tested', 0)),
+            'convergence_rate': float(grid_search_results.get('convergence_rate', 0)),
+            'all_results': convert_to_native_types(grid_search_results.get('all_results', []))
+        })
     
-    # Save hourly metrics
-    hourly_metrics = pd.DataFrame({
-        'hour': range(24),
-        'rmse': seasonal_rmse,
-        'mae': seasonal_mae
-    })
-    hourly_metrics.to_csv(os.path.join(analysis_dir, 'hourly_metrics.csv'), index=False)
-    logger.info(f"Saved hourly metrics to {analysis_dir}/hourly_metrics.csv")
+    # Add preprocessing pipeline if available
+    if preprocessor:
+        model_summary['preprocessing_pipeline'] = convert_to_native_types(preprocessor.pipeline_steps)
     
-    return metrics_summary
+    return model_summary
 
-def main():
-    """Main function to train and optimize SARIMA model."""
+def handle_post_training(model, model_params: dict, metrics: dict, train_data: pd.DataFrame, 
+                       test_data: pd.DataFrame, initial_config: dict, stationarity_results: dict,
+                       tracker: ARIMATracker, start_time: datetime,
+                       grid_search_results: dict = None, preprocessor=None, use_grid_search: bool = False) -> None:
+    """Handle all post-training steps including predictions, evaluation, and saving results."""
+    # Generate predictions
+    logger.info(f"Generating predictions for test data with {len(test_data)} steps")
+    if isinstance(model, TimeSeriesModel):
+        mean_forecast, confidence_intervals = model.predict(len(test_data))
+    else:
+        # For fitted SARIMAX model
+        forecast = model.get_forecast(steps=len(test_data))
+        mean_forecast = forecast.predicted_mean
+        conf_int = forecast.conf_int()
+        confidence_intervals = (conf_int.iloc[:, 0], conf_int.iloc[:, 1])
+    
+    # Create model-specific directory name
+    model_name = f"sarima_p{model_params['p']}_d{model_params['d']}_q{model_params['q']}_P{model_params['P']}_D{model_params['D']}_Q{model_params['Q']}_s{model_params['s']}"
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    # Create model path and analysis paths
+    model_path = os.path.join("data/models", model_name, timestamp)
+    analysis_path = os.path.join(model_path, "analysis")
+    
+    # Create directories
+    os.makedirs(os.path.join(model_path, "model"), exist_ok=True)
+    os.makedirs(analysis_path, exist_ok=True)
+    
+    # Save model
+    model_file_path = os.path.join(model_path, "model", "sarima_model.joblib")
+    if isinstance(model, TimeSeriesModel):
+        model.save_model(model_file_path)
+    else:
+        model_data = {
+            'fitted_model': model,
+            'config': model_params,
+            'model_type': 'sarima'
+        }
+        joblib.dump(model_data, model_file_path)
+        logger.info(f"Model saved successfully")
+    
+    # Generate and save analysis plots
+    analysis_results = analyze_model_results(
+        test_data[initial_config['model']['target_column']] if isinstance(test_data[initial_config['model']['target_column']], np.ndarray) else test_data[initial_config['model']['target_column']].values,
+        mean_forecast,
+        test_data.index,
+        confidence_intervals,
+        analysis_path
+    )
+    
+    # Log model parameters and metrics using the tracker
     try:
-        # Initialize logger and MLflow tracker
-        logger.info("Initializing MLflow tracker for experiment: sarima_optimization")
-        tracker = ARIMATracker(experiment_name="sarima_optimization")
+        # Log model parameters with proper prefixes
+        model_params_with_prefix = {
+            'model.arima.p': model_params['p'],
+            'model.arima.d': model_params['d'],
+            'model.arima.q': model_params['q'],
+            'model.arima.P': model_params['P'],
+            'model.arima.D': model_params['D'],
+            'model.arima.Q': model_params['Q'],
+            'model.arima.s': model_params['s'],
+            'model.arima.trend': model_params.get('trend', 'c'),
+            'model.arima.enforce_stationarity': model_params.get('enforce_stationarity', True),
+            'model.arima.enforce_invertibility': model_params.get('enforce_invertibility', True),
+            'model.arima.concentrate_scale': model_params.get('concentrate_scale', False),
+            'model.arima.method': model_params.get('method', 'lbfgs'),
+            'model.arima.maxiter': model_params.get('maxiter', 50)
+        }
+        tracker.log_params_safely(model_params_with_prefix)
         
+        # Log training metrics with proper prefixes
+        training_metrics = {
+            'metrics.training.aic': metrics['aic'],
+            'metrics.training.bic': metrics.get('bic', 0),
+            'metrics.training.hqic': metrics.get('hqic', 0),
+            'metrics.training.rmse': analysis_results['rmse'],
+            'metrics.training.mae': analysis_results['mae'],
+            'metrics.training.mape': analysis_results['mape'],
+            'metrics.training.r2': analysis_results.get('r2', 0),
+            'metrics.training.directional_accuracy': analysis_results.get('directional_accuracy', 0)
+        }
+        tracker.log_metrics_safely(training_metrics)
+        
+        # Log model diagnostics with proper prefixes
+        diagnostic_metrics = {
+            'metrics.diagnostics.residuals_mean': analysis_results.get('residuals_mean', 0),
+            'metrics.diagnostics.residuals_std': analysis_results.get('residuals_std', 0),
+            'metrics.diagnostics.residuals_skewness': analysis_results.get('residuals_skewness', 0),
+            'metrics.diagnostics.residuals_kurtosis': analysis_results.get('residuals_kurtosis', 0),
+            'metrics.diagnostics.residuals_autocorrelation': analysis_results.get('residuals_autocorrelation', 0),
+            'metrics.diagnostics.residuals_normal': analysis_results.get('residuals_normal', False),
+            'metrics.diagnostics.residuals_independent': analysis_results.get('residuals_independent', False)
+        }
+        tracker.log_metrics_safely(diagnostic_metrics)
+        
+        # Log forecast metrics with proper prefixes
+        forecast_metrics = {
+            'metrics.forecast.rmse': analysis_results['rmse'],
+            'metrics.forecast.mae': analysis_results['mae'],
+            'metrics.forecast.mape': analysis_results['mape'],
+            'metrics.forecast.r2': analysis_results.get('r2', 0)
+        }
+        tracker.log_metrics_safely(forecast_metrics)
+        
+        # Log stationarity analysis results
+        stationarity_metrics = {
+            'stationarity.adf_test.statistic': stationarity_results['adf_test']['test_statistic'],
+            'stationarity.adf_test.pvalue': stationarity_results['adf_test']['pvalue'],
+            'stationarity.adf_test.is_stationary': stationarity_results['adf_test']['is_stationary'],
+            'stationarity.kpss_test.statistic': stationarity_results['kpss_test']['test_statistic'],
+            'stationarity.kpss_test.pvalue': stationarity_results['kpss_test']['pvalue'],
+            'stationarity.kpss_test.is_stationary': stationarity_results['kpss_test']['is_stationary'],
+            'stationarity.overall.is_stationary': stationarity_results['overall_assessment']['is_stationary']
+        }
+        tracker.log_metrics_safely(stationarity_metrics)
+        
+        # Log critical values and other stationarity parameters
+        stationarity_params = {
+            'stationarity.adf_test.critical_values': stationarity_results['adf_test']['critical_values'],
+            'stationarity.kpss_test.critical_values': stationarity_results['kpss_test']['critical_values'],
+            'stationarity.overall.confidence': stationarity_results['overall_assessment']['confidence'],
+            'stationarity.overall.recommendation': stationarity_results['overall_assessment']['recommendation']
+        }
+        tracker.log_params_safely(stationarity_params)
+        
+        # Log artifacts
+        mlflow.log_artifacts(analysis_path, "analysis")
+        mlflow.log_artifact(model_file_path, "model")
+        
+    except Exception as e:
+        logger.warning(f"Failed to log results to MLflow: {str(e)}. Continuing without MLflow tracking.")
+    
+    # Create model summary
+    model_summary = create_model_summary(
+        initial_config=initial_config,
+        train_data=train_data,
+        test_data=test_data,
+        model_params=model_params,
+        metrics=metrics,
+        analysis_results=analysis_results,
+        stationarity_results=stationarity_results,
+        model_path=model_path,
+        analysis_path=analysis_path,
+        grid_search_results=grid_search_results,
+        preprocessor=preprocessor,
+        use_grid_search=use_grid_search
+    )
+    
+    # Save model summary
+    summary_file = os.path.join(model_path, "model_summary.json")
+    with open(summary_file, 'w') as f:
+        json.dump(model_summary, f, indent=4)
+    
+    # Log execution time
+    end_time = datetime.now()
+    execution_time = (end_time - start_time).total_seconds()
+    logger.info(f"Total training time: {execution_time:.2f} seconds")
+    
+    # Log the run URL
+    if mlflow.active_run():
+        run_id = mlflow.active_run().info.run_id
+        experiment_id = mlflow.active_run().info.experiment_id
+        print(f"🏃 View run {tracker.current_run.info.run_name} at: http://localhost:5001/#/experiments/{experiment_id}/runs/{run_id}")
+        print(f"🧪 View experiment at: http://localhost:5001/#/experiments/{experiment_id}")
+    
+    return model_summary
+
+@log_execution_time
+def main():
+    """Main function to train and evaluate SARIMA model."""
+    # Load configuration
+    with open('config/config.json', 'r') as f:
+        config = json.load(f)
+    
+    # Get hyperparameter optimization setting from config
+    use_grid_search = config['model'].get('optimize_hyperparameters', False)
+    logger.info(f"Using {'grid search' if use_grid_search else 'suggested parameters'} for model training")
+    
+    # Initialize MLflow tracking
+    run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    tracker = ARIMATracker(experiment_name="sarima_optimization", run_name=f"run_{run_timestamp}")
+    
+    try:
         # Load and preprocess data
         logger.info("Loading data from data/examples/consumption_data_france.csv")
-        df = pd.read_csv("data/examples/consumption_data_france.csv")
-        df['date'] = pd.to_datetime(df['date'])
+        data = pd.read_csv('data/examples/consumption_data_france.csv', parse_dates=['date'])
+        data.set_index('date', inplace=True)
         
         # Initialize preprocessor with configuration
-        config = {
-            'handle_missing_values': True,
-            'missing_values_method': 'interpolate',
-            'add_time_features': True,
-            'add_lag_features': True,
-            'lag_features': [1, 2, 3, 24, 168],  # Include weekly lag
-            'add_rolling_features': True,
-            'rolling_windows': [24, 168],  # Daily and weekly windows
-            'scale_features': True,
-            'scaling_method': 'standard',
-            'columns_to_scale': ['value', 'temperature', 'humidity']
-        }
-        
-        preprocessor = DataPreprocessor(config=config)
-        df = preprocessor.prepare_data(df)
-        
-        # Rename columns to match model expectations
-        df = df.rename(columns={'date': 'timestamp', 'value': 'consumption'})
-        
-        # Split data into training and test sets (80-20 split)
-        train_size = int(len(df) * 0.8)
-        train_data = df[:train_size]
-        test_data = df[train_size:]
-        logger.info(f"Split data into {len(train_data)} training and {len(test_data)} test samples")
-        
-        # Define parameter grid for SARIMA
-        param_grid = {
-            'p': [1, 2, 3],
-            'd': [1],
-            'q': [1, 2],
-            'P': [0, 1],
-            'D': [1],
-            'Q': [0, 1],
-            's': [24]  # Daily seasonality
-        }
-        
-        # Initialize model with MLflow tracking
-        logger.info("Starting grid search with MLflow tracking")
-        best_model = None
-        best_aic = float('inf')
-        
-        for p in param_grid['p']:
-            for d in param_grid['d']:
-                for q in param_grid['q']:
-                    for P in param_grid['P']:
-                        for D in param_grid['D']:
-                            for Q in param_grid['Q']:
-                                for s in param_grid['s']:
-                                    config = {
-                                        'model_type': 'sarima',
-                                        'p': p, 'd': d, 'q': q,
-                                        'P': P, 'D': D, 'Q': Q,
-                                        's': s
-                                    }
-                                    
-                                    logger.info(f"Initializing TimeSeriesModel with config: {config}")
-                                    model = TimeSeriesModel(config=config)
-                                    
-                                    try:
-                                        results = model.train(train_data)
-                                        aic = results['aic']
-                                        
-                                        if aic < best_aic:
-                                            best_aic = aic
-                                            best_model = model
-                                            
-                                        # Log metrics
-                                        metrics = {
-                                            'aic': aic,
-                                            'bic': results['bic'],
-                                            'hqic': results['hqic']
-                                        }
-                                        tracker.log_training_metrics(metrics)
-                                        
-                                    except Exception as e:
-                                        logger.error(f"Error training model: {str(e)}")
-                                        continue
-        
-        if best_model is not None:
-            # Generate predictions
-            predictions, (lower, upper) = best_model.predict(test_data)
-            
-            # Calculate and log performance metrics
-            metrics = best_model.evaluate(test_data['consumption'].values, predictions)
-            tracker.log_training_metrics(metrics)
-            
-            # Create directories for results
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            model_name = f"sarima_p{best_model.config['p']}_d{best_model.config['d']}_q{best_model.config['q']}_P{best_model.config['P']}_D{best_model.config['D']}_Q{best_model.config['Q']}_s{best_model.config['s']}"
-            base_dir = os.path.join('data', 'models', model_name, timestamp)
-            
-            # Create subdirectories
-            model_dir = os.path.join(base_dir, 'model')
-            results_dir = os.path.join(base_dir, 'results')
-            analysis_dir = os.path.join(base_dir, 'analysis')
-            experiment_dir = os.path.join(base_dir, 'experiment')
-            
-            # Create all directories
-            for directory in [model_dir, results_dir, analysis_dir, experiment_dir]:
-                os.makedirs(directory, exist_ok=True)
-            
-            # Save predictions and confidence intervals
-            results_df = pd.DataFrame({
-                'timestamp': test_data['timestamp'],
-                'actual': test_data['consumption'],
-                'predicted': predictions,
-                'lower_bound': lower,
-                'upper_bound': upper
+        preprocessor_config = {
+            'add_time_features': config['preprocessing'].get('time_features', True),
+            'add_lag_features': config['preprocessing'].get('lag_features', True),
+            'add_rolling_features': config['preprocessing'].get('rolling_features', True),
+            'handle_missing_values': config['preprocessing'].get('handle_missing_values', True),
+            'handle_outliers': config['preprocessing'].get('handle_outliers', False),
+            'outlier_config': config['preprocessing'].get('outlier_config', {
+                'method': 'isolation_forest',
+                'contamination': 0.1
             })
-            predictions_path = os.path.join(results_dir, 'predictions.csv')
-            results_df.to_csv(predictions_path, index=False)
-            
-            # Save the best model
-            model_path = os.path.join(model_dir, 'sarima_model.joblib')
-            best_model.save_model(model_path)
-            
-            # Save configuration
-            config_df = pd.DataFrame([{
-                'experiment_name': 'sarima_optimization',
-                'timestamp': timestamp,
-                'model_type': 'SARIMA',
-                **best_model.config
-            }])
-            config_path = os.path.join(experiment_dir, 'config.csv')
-            config_df.to_csv(config_path, index=False)
-            
-            # Save metrics
-            metrics_df = pd.DataFrame([metrics])
-            metrics_path = os.path.join(results_dir, 'metrics.csv')
-            metrics_df.to_csv(metrics_path, index=False)
-            
-            # Analyze best model results
-            analysis_metrics = analyze_best_model_results(
-                actual=test_data['consumption'].values,
-                predicted=predictions,
-                dates=test_data['timestamp'].values,
-                confidence_intervals=(lower, upper),
-                output_dir=analysis_dir
-            )
-            
-            # Save analysis metrics
-            analysis_metrics_df = pd.DataFrame([analysis_metrics])
-            analysis_metrics_path = os.path.join(analysis_dir, 'analysis_metrics.csv')
-            analysis_metrics_df.to_csv(analysis_metrics_path, index=False)
-            
-            # Create a summary file
-            summary = {
-                'model_name': model_name,
-                'timestamp': timestamp,
-                'best_params': best_model.config,
-                'metrics': metrics,
-                'analysis_metrics': analysis_metrics,
-                'data_info': {
-                    'train_samples': len(train_data),
-                    'test_samples': len(test_data),
-                    'features': list(train_data.columns),
-                    'seasonal_period': best_model.config['s']
-                }
+        }
+        
+        preprocessor = DataPreprocessor(
+            config=preprocessor_config,
+            experiment_name=tracker.experiment_name,
+            run_name=tracker.current_run.info.run_name if tracker.current_run else None
+        )
+        
+        # Prepare data
+        logger.info("Starting data preparation")
+        data = preprocessor.prepare_data(data, target_column=config['model']['target_column'])
+        
+        # Get suggested parameters and stationarity results
+        suggested_params, stationarity_results = get_suggested_parameters(data[config['model']['target_column']], config)
+        
+        # Split data using preprocessor's method
+        logger.info(f"Splitting time series data with train_ratio={config['preprocessing']['train_ratio']}, validation_ratio={config['preprocessing'].get('validation_ratio', 0.0)}, gap={config['preprocessing'].get('gap', 0)}")
+        train_data, test_data = preprocessor.train_test_split_timeseries(
+            data,
+            train_ratio=config['preprocessing']['train_ratio'],
+            validation_ratio=config['preprocessing'].get('validation_ratio', 0.0),
+            target_column=config['model']['target_column'],
+            date_column=data.index.name,
+            gap=config['preprocessing'].get('gap', 0)
+        )
+        
+        # Log data split information
+        logger.info(f"Split data into {len(train_data)} training samples, 0 validation samples, and {len(test_data)} test samples")
+        logger.info(f"Training data date range: {train_data.index[0]} to {train_data.index[-1]}")
+        logger.info(f"Test data date range: {test_data.index[0]} to {test_data.index[-1]}")
+        
+        # Log data statistics
+        target_col = config['model']['target_column']
+        logger.info(f"Training target stats - Mean: {train_data[target_col].mean():.4f}, Std: {train_data[target_col].std():.4f}, Min: {train_data[target_col].min():.4f}, Max: {train_data[target_col].max():.4f}")
+        logger.info(f"Test target stats - Mean: {test_data[target_col].mean():.4f}, Std: {test_data[target_col].std():.4f}, Min: {test_data[target_col].min():.4f}, Max: {test_data[target_col].max():.4f}")
+        
+        if use_grid_search:
+            # Set up grid search parameters
+            param_grid = {
+                'p': list(range(max(0, suggested_params['p'] - 1), min(4, suggested_params['p'] + 2))),
+                'd': [suggested_params['d']],
+                'q': list(range(max(0, suggested_params['q'] - 1), min(4, suggested_params['q'] + 2))),
+                'P': list(range(max(0, suggested_params['P'] - 1), min(3, suggested_params['P'] + 2))),
+                'D': [suggested_params['D']],
+                'Q': list(range(max(0, suggested_params['Q'] - 1), min(3, suggested_params['Q'] + 2))),
+                's': [suggested_params['s']]
             }
             
-            with open(os.path.join(base_dir, 'model_summary.json'), 'w') as f:
-                json.dump(summary, f, indent=4)
+            # Initialize model for grid search
+            model = TimeSeriesModel(
+                model_type='sarima',
+                **config.get('model', {
+                    'trend': 'c',
+                    'maxiter': 50
+                })
+            )
             
-            logger.info(f"Model and all related files saved to {base_dir}/")
-            logger.info(f"MLflow tracking UI available at: http://localhost:5001")
+            # Perform grid search
+            logger.info("Starting grid search for best parameters")
+            grid_search_results = model.grid_search(train_data[config['model']['target_column']].values, param_grid)
+            
+            # Get best model and parameters
+            model = grid_search_results['best_model']
+            model_params = grid_search_results['best_params']
+            metrics = {
+                'aic': grid_search_results['best_aic'],
+                'bic': grid_search_results['best_bic'],
+                'hqic': grid_search_results['best_hqic']
+            }
+            
+            logger.info(f"Grid search completed. Best parameters: {model_params}")
+            logger.info(f"Best AIC: {metrics['aic']}")
             
         else:
-            logger.error("No successful model found during grid search")
+            # Train with suggested parameters
+            logger.info(f"Training SARIMA model with parameters: {suggested_params}")
+            model = TimeSeriesModel(
+                model_type='sarima',
+                **{**config.get('model', {
+                    'trend': 'c',
+                    'maxiter': 50
+                }), **suggested_params}
+            )
             
+            # Train model
+            logger.info("Starting model training")
+            metrics = model.fit(train_data[config['model']['target_column']].values)
+            model_params = suggested_params
+            grid_search_results = None
+        
+        # Handle post-training tasks
+        model_summary = handle_post_training(
+            model=model,
+            model_params=model_params,
+            metrics=metrics,
+            train_data=train_data,
+            test_data=test_data,
+            initial_config=config,
+            stationarity_results=stationarity_results,
+            tracker=tracker,
+            start_time=datetime.strptime(run_timestamp, '%Y%m%d_%H%M%S'),
+            grid_search_results=grid_search_results,
+            preprocessor=preprocessor,
+            use_grid_search=use_grid_search
+        )
+        
+        return model_summary
+        
     except Exception as e:
-        logger.error(f"Error in SARIMA optimization: {str(e)}")
+        logger.error(f"Error during model training: {str(e)}")
         raise
+    
+    finally:
+        if tracker:
+            tracker.end_run()
 
 if __name__ == "__main__":
     main() 

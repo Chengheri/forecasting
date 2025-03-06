@@ -1,12 +1,14 @@
 {
     "preprocessing": {
+        "train_ratio": 0.8,
+        "validation_ratio": 0.0,
+        "gap": 0,
         "handle_missing_values": true,
         "missing_values_method": "interpolate",
         "handle_outliers": true,
         "outlier_config": {
             "method": "isolation_forest",
-            "contamination": 0.1,
-            "target_column": "value"
+            "contamination": 0.1
         },
         "remove_anomalies": true,
         "add_time_features": true,
@@ -20,14 +22,20 @@
         "columns_to_scale": ["value", "temperature", "humidity"]
     },
     "model": {
-        "type": "arima",
+        "type": "sarima",
+        "optimize_hyperparameters": false,
         "grid_search": {
             "p": [1, 2, 3],
             "d": [1],
             "q": [1, 2]
         },
         "trend": "c",
-        "train_test_split": 0.8
+        "maxiter": 2,
+        "enforce_stationarity": true,
+        "enforce_invertibility": true,
+        "concentrate_scale": false,
+        "method": "lbfgs",
+        "target_column": "value"
     },
     "mlflow": {
         "experiment_name": "arima_optimization_new",
