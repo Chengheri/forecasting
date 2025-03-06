@@ -32,6 +32,7 @@ ENV/
 *.swo
 
 # Project specific
+data/
 data/logs/*
 !data/logs/.gitkeep
 *.db

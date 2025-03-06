@@ -10,22 +10,24 @@ from scipy import stats
 import matplotlib.pyplot as plt
 from ..utils.logger import Logger
 from .trackers import PreprocessorTracker
+from .mlflow_utils import MLflowTracker
 from datetime import datetime
 
 logger = Logger()
 
 class AdvancedPreprocessor:
-    def __init__(self, config: Dict[str, Any], experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+    def __init__(self, config: Dict[str, Any], experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None, run_id: Optional[str] = None):
         """Initialize the advanced preprocessor.
         
         Args:
             config: Dictionary containing preprocessing configuration
             experiment_name: Name of the MLflow experiment
             run_name: Optional name for the MLflow run
+            run_id: Optional ID for the MLflow run
         """
         self.config = config
         self.logger = Logger()
-        self.tracker = PreprocessorTracker(experiment_name, run_name)
+        self.tracker = PreprocessorTracker(experiment_name=experiment_name, run_name=run_name, run_id=run_id)
         self.pipeline_steps = []
         self.scaler = StandardScaler()
         self.anomaly_detectors = {}

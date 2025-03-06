@@ -308,31 +308,20 @@ def main():
     
     # Initialize MLflow tracking
     run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    tracker = ARIMATracker(experiment_name="sarima_optimization", run_name=f"run_{run_timestamp}")
+    tracker = ARIMATracker(experiment_name=config['mlflow']['experiment_name'], run_name=f"run_{run_timestamp}")
     
     try:
         # Load and preprocess data
-        logger.info("Loading data from data/examples/consumption_data_france.csv")
-        data = pd.read_csv('data/examples/consumption_data_france.csv', parse_dates=['date'])
+        logger.info(f"Loading data from {config['paths']['data']}")
+        data = pd.read_csv(config['paths']['data'], parse_dates=['date'])
         data.set_index('date', inplace=True)
         
         # Initialize preprocessor with configuration
-        preprocessor_config = {
-            'add_time_features': config['preprocessing'].get('time_features', True),
-            'add_lag_features': config['preprocessing'].get('lag_features', True),
-            'add_rolling_features': config['preprocessing'].get('rolling_features', True),
-            'handle_missing_values': config['preprocessing'].get('handle_missing_values', True),
-            'handle_outliers': config['preprocessing'].get('handle_outliers', False),
-            'outlier_config': config['preprocessing'].get('outlier_config', {
-                'method': 'isolation_forest',
-                'contamination': 0.1
-            })
-        }
-        
         preprocessor = DataPreprocessor(
-            config=preprocessor_config,
+            config=config['preprocessing'],
             experiment_name=tracker.experiment_name,
-            run_name=tracker.current_run.info.run_name if tracker.current_run else None
+            run_name=tracker.current_run.info.run_name,
+            run_id=tracker.current_run.info.run_id
         )
         
         # Prepare data
@@ -378,10 +367,7 @@ def main():
             # Initialize model for grid search
             model = TimeSeriesModel(
                 model_type='sarima',
-                **config.get('model', {
-                    'trend': 'c',
-                    'maxiter': 50
-                })
+                **config['model']
             )
             
             # Perform grid search
@@ -405,10 +391,7 @@ def main():
             logger.info(f"Training SARIMA model with parameters: {suggested_params}")
             model = TimeSeriesModel(
                 model_type='sarima',
-                **{**config.get('model', {
-                    'trend': 'c',
-                    'maxiter': 50
-                }), **suggested_params}
+                **{**config['model'], **suggested_params}
             )
             
             # Train model

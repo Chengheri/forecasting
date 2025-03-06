@@ -5,21 +5,23 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from datetime import datetime, timedelta
 from ..utils.logger import Logger
 from .trackers import PreprocessorTracker
+from .mlflow_utils import MLflowTracker
 
 logger = Logger()
 
 class DataPreprocessor:
-    def __init__(self, config: Dict[str, Any], experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
+    def __init__(self, config: Dict[str, Any], experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None, run_id: Optional[str] = None):
         """Initialize the data preprocessor.
         
         Args:
             config: Dictionary containing preprocessing configuration
             experiment_name: Name of the MLflow experiment
             run_name: Name of the MLflow run (optional)
+            run_id: ID of the MLflow run (optional)
         """
         self.config = config
         self.scaler = None
-        self.tracker = PreprocessorTracker(experiment_name=experiment_name, run_name=run_name)
+        self.tracker = PreprocessorTracker(experiment_name=experiment_name, run_name=run_name, run_id=run_id)
         self.pipeline_steps = []
         
     def train_test_split_timeseries(self, 
@@ -358,7 +360,8 @@ class DataPreprocessor:
                 advanced_preprocessor = AdvancedPreprocessor(
                     config=outlier_config,
                     experiment_name=self.tracker.experiment_name,
-                    run_name=self.tracker.current_run.info.run_name if self.tracker.current_run else None
+                    run_name=self.tracker.current_run.info.run_name if self.tracker.current_run else None,
+                    run_id=self.tracker.current_run.info.run_id if self.tracker.current_run else None
                 )
                 
                 # Process anomalies (detect and optionally clean)
