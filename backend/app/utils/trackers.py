@@ -101,17 +101,15 @@ class PreprocessorTracker(MLflowTracker):
         prefixed_info = self._prefix_dict_keys(pipeline_info, "preprocessing.pipeline")
         self.log_params_safely(prefixed_info)
 
-class LSTMTracker(MLflowTracker):
-    """Tracker for LSTM model training and evaluation."""
+class ForecastingTracker(PreprocessorTracker):
+    """Base tracker for forecasting models, combining preprocessing and model tracking."""
     
     def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
-        super().__init__(experiment_name)
-        if run_name:
-            self.start_run(run_name=run_name)
+        super().__init__(experiment_name=experiment_name, run_name=run_name)
     
-    def _prefix_dict_keys(self, d: Dict[str, Any], prefix: str) -> Dict[str, Any]:
-        """Add prefix to all dictionary keys."""
-        return {f"{prefix}.{k}": v for k, v in d.items()}
+    
+class LSTMTracker(ForecastingTracker):
+    """Tracker for LSTM model training and evaluation."""
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log LSTM-specific parameters."""
@@ -127,17 +125,8 @@ class LSTMTracker(MLflowTracker):
         prefixed_params = self._prefix_dict_keys(lstm_params, "model.lstm")
         self.log_params_safely(prefixed_params)
 
-class ProphetTracker(MLflowTracker):
+class ProphetTracker(ForecastingTracker):
     """Tracker for Prophet model training and evaluation."""
-    
-    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
-        super().__init__(experiment_name)
-        if run_name:
-            self.start_run(run_name=run_name)
-    
-    def _prefix_dict_keys(self, d: Dict[str, Any], prefix: str) -> Dict[str, Any]:
-        """Add prefix to all dictionary keys."""
-        return {f"{prefix}.{k}": v for k, v in d.items()}
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log Prophet-specific parameters."""
@@ -151,17 +140,8 @@ class ProphetTracker(MLflowTracker):
         prefixed_params = self._prefix_dict_keys(prophet_params, "model.prophet")
         self.log_params_safely(prefixed_params)
 
-class ARIMATracker(MLflowTracker):
+class ARIMATracker(ForecastingTracker):
     """Tracker for ARIMA model training and evaluation."""
-    
-    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
-        super().__init__(experiment_name)
-        if run_name:
-            self.start_run(run_name=run_name)
-    
-    def _prefix_dict_keys(self, d: Dict[str, Any], prefix: str) -> Dict[str, Any]:
-        """Add prefix to all dictionary keys."""
-        return {f"{prefix}.{k}": v for k, v in d.items()}
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log ARIMA-specific parameters."""
@@ -225,17 +205,8 @@ class ARIMATracker(MLflowTracker):
         prefixed_metrics = self._prefix_dict_keys(forecast_metrics, "metrics.forecast")
         self.log_metrics_safely(prefixed_metrics)
 
-class LightGBMTracker(MLflowTracker):
+class LightGBMTracker(ForecastingTracker):
     """Tracker for LightGBM model training and evaluation."""
-    
-    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
-        super().__init__(experiment_name)
-        if run_name:
-            self.start_run(run_name=run_name)
-    
-    def _prefix_dict_keys(self, d: Dict[str, Any], prefix: str) -> Dict[str, Any]:
-        """Add prefix to all dictionary keys."""
-        return {f"{prefix}.{k}": v for k, v in d.items()}
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log LightGBM-specific parameters."""
@@ -258,17 +229,8 @@ class LightGBMTracker(MLflowTracker):
         prefixed_importance = self._prefix_dict_keys(importance, "model.lightgbm.feature_importance")
         self.log_metrics_safely(prefixed_importance)
 
-class XGBoostTracker(MLflowTracker):
+class XGBoostTracker(ForecastingTracker):
     """Tracker for XGBoost model training and evaluation."""
-    
-    def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
-        super().__init__(experiment_name)
-        if run_name:
-            self.start_run(run_name=run_name)
-    
-    def _prefix_dict_keys(self, d: Dict[str, Any], prefix: str) -> Dict[str, Any]:
-        """Add prefix to all dictionary keys."""
-        return {f"{prefix}.{k}": v for k, v in d.items()}
     
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log XGBoost-specific parameters."""

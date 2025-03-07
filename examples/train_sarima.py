@@ -54,7 +54,7 @@ def create_model_summary(initial_config: dict, train_data: pd.DataFrame, test_da
     Returns:
         Dictionary containing model summary
     """
-    # Convert numpy numbers to native Python types
+    # Convert numpy numbers to native types and ensure all dictionary keys are strings
     def convert_to_native_types(obj):
         if isinstance(obj, (np.int_, np.intc, np.intp, np.int8, np.int16, np.int32,
                           np.int64, np.uint8, np.uint16, np.uint32, np.uint64)):
@@ -62,13 +62,13 @@ def create_model_summary(initial_config: dict, train_data: pd.DataFrame, test_da
         elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
             return float(obj)
         elif isinstance(obj, dict):
-            return {key: convert_to_native_types(value) for key, value in obj.items()}
+            return {str(key): convert_to_native_types(value) for key, value in obj.items()}
         elif isinstance(obj, (list, tuple)):
             return [convert_to_native_types(item) for item in obj]
         return obj
 
     model_summary = {
-        'initial_configuration': initial_config,
+        'initial_configuration': convert_to_native_types(initial_config),
         'training_details': {
             'train_samples': int(len(train_data)),
             'test_samples': int(len(test_data)),
@@ -81,13 +81,7 @@ def create_model_summary(initial_config: dict, train_data: pd.DataFrame, test_da
                 'aic': float(metrics.get('aic', 0)),
                 'bic': float(metrics.get('bic', 0)),
                 'hqic': float(metrics.get('hqic', 0)),
-                'metrics': {
-                    'rmse': float(analysis_results.get('rmse', 0)),
-                    'mae': float(analysis_results.get('mae', 0)),
-                    'mape': float(analysis_results.get('mape', 0)),
-                    'r2': float(analysis_results.get('r2', 0)),
-                    'directional_accuracy': float(analysis_results.get('directional_accuracy', 0))
-                },
+                'metrics': convert_to_native_types(analysis_results),
                 'residuals_analysis': {
                     'mean': float(analysis_results.get('residuals_mean', 0)),
                     'std': float(analysis_results.get('residuals_std', 0)),
@@ -137,12 +131,26 @@ def handle_post_training(model, model_params: dict, metrics: dict, train_data: p
     logger.info(f"Generating predictions for test data with {len(test_data)} steps")
     if isinstance(model, TimeSeriesModel):
         mean_forecast, confidence_intervals = model.predict(len(test_data))
+        # Ensure confidence intervals are properly formatted
+        if isinstance(confidence_intervals, tuple) and len(confidence_intervals) == 2:
+            lower_ci, upper_ci = confidence_intervals
+        else:
+            logger.warning(f"Unexpected confidence intervals format from TimeSeriesModel. Using None.")
+            confidence_intervals = None
     else:
         # For fitted SARIMAX model
         forecast = model.get_forecast(steps=len(test_data))
         mean_forecast = forecast.predicted_mean
         conf_int = forecast.conf_int()
-        confidence_intervals = (conf_int.iloc[:, 0], conf_int.iloc[:, 1])
+        try:
+            # Extract lower and upper bounds and ensure they are numpy arrays
+            lower_ci = conf_int.iloc[:, 0].values
+            upper_ci = conf_int.iloc[:, 1].values
+            confidence_intervals = (lower_ci, upper_ci)
+            logger.info(f"Confidence intervals shape: lower {lower_ci.shape}, upper {upper_ci.shape}")
+        except Exception as e:
+            logger.warning(f"Failed to process confidence intervals: {str(e)}. Using None.")
+            confidence_intervals = None
     
     # Create model-specific directory name
     model_name = f"sarima_p{model_params['p']}_d{model_params['d']}_q{model_params['q']}_P{model_params['P']}_D{model_params['D']}_Q{model_params['Q']}_s{model_params['s']}"
@@ -169,9 +177,12 @@ def handle_post_training(model, model_params: dict, metrics: dict, train_data: p
         joblib.dump(model_data, model_file_path)
         logger.info(f"Model saved successfully")
     
+    # Ensure target values are numpy array
+    target_values = test_data[initial_config['model']['target_column']].values if isinstance(test_data[initial_config['model']['target_column']], pd.Series) else test_data[initial_config['model']['target_column']]
+    
     # Generate and save analysis plots
     analysis_results = analyze_model_results(
-        test_data[initial_config['model']['target_column']] if isinstance(test_data[initial_config['model']['target_column']], np.ndarray) else test_data[initial_config['model']['target_column']].values,
+        target_values,
         mean_forecast,
         test_data.index,
         confidence_intervals,
@@ -302,9 +313,10 @@ def main():
     with open('config/config.json', 'r') as f:
         config = json.load(f)
     
-    # Get hyperparameter optimization setting from config
-    use_grid_search = config['model'].get('optimize_hyperparameters', False)
-    logger.info(f"Using {'grid search' if use_grid_search else 'suggested parameters'} for model training")
+    # Get optimization settings from config
+    use_grid_search = config['model'].get('use_grid_search', False)
+    optimize_hyperparameters = config['model'].get('optimize_hyperparameters', False)
+    logger.info(f"Using grid search: {use_grid_search}, hyperparameter optimization: {optimize_hyperparameters}")
     
     # Initialize MLflow tracking
     run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -319,9 +331,7 @@ def main():
         # Initialize preprocessor with configuration
         preprocessor = DataPreprocessor(
             config=config['preprocessing'],
-            experiment_name=tracker.experiment_name,
-            run_name=tracker.current_run.info.run_name,
-            run_id=tracker.current_run.info.run_id
+            tracker=tracker
         )
         
         # Prepare data
@@ -352,30 +362,33 @@ def main():
         logger.info(f"Training target stats - Mean: {train_data[target_col].mean():.4f}, Std: {train_data[target_col].std():.4f}, Min: {train_data[target_col].min():.4f}, Max: {train_data[target_col].max():.4f}")
         logger.info(f"Test target stats - Mean: {test_data[target_col].mean():.4f}, Std: {test_data[target_col].std():.4f}, Min: {test_data[target_col].min():.4f}, Max: {test_data[target_col].max():.4f}")
         
+        # Initialize model with data
+        valid_model_params = {'p', 'd', 'q', 'P', 'D', 'Q', 's', 'maxiter', 'method', 'trend',
+                            'enforce_stationarity', 'enforce_invertibility', 'concentrate_scale'}
+        
+        model = TimeSeriesModel(
+            config={
+                'model_type': 'sarima',
+                **{k: v for k, v in config['model'].items() if k in valid_model_params}
+            },
+            tracker=tracker,
+            data=train_data[config['model']['target_column']].values.ravel()  # Ensure 1D array
+        )
+        
         if use_grid_search:
-            # Set up grid search parameters
-            param_grid = {
-                'p': list(range(max(0, suggested_params['p'] - 1), min(4, suggested_params['p'] + 2))),
-                'd': [suggested_params['d']],
-                'q': list(range(max(0, suggested_params['q'] - 1), min(4, suggested_params['q'] + 2))),
-                'P': list(range(max(0, suggested_params['P'] - 1), min(3, suggested_params['P'] + 2))),
-                'D': [suggested_params['D']],
-                'Q': list(range(max(0, suggested_params['Q'] - 1), min(3, suggested_params['Q'] + 2))),
-                's': [suggested_params['s']]
-            }
-            
-            # Initialize model for grid search
-            model = TimeSeriesModel(
-                model_type='sarima',
-                **config['model']
+            # Train with grid search
+            logger.info("Starting grid search")
+            grid_search_results = model.grid_search(
+                data=train_data[config['model']['target_column']].values.ravel(),
+                param_grid=config['grid_search']['param_grid'],
+                max_iterations=config['grid_search'].get('max_iterations', 50),
+                early_stopping=config['grid_search'].get('early_stopping', True),
+                early_stopping_patience=config['grid_search'].get('early_stopping_patience', 5),
+                timeout=config['grid_search'].get('timeout', 60)
             )
             
-            # Perform grid search
-            logger.info("Starting grid search for best parameters")
-            grid_search_results = model.grid_search(train_data[config['model']['target_column']].values, param_grid)
-            
-            # Get best model and parameters
-            model = grid_search_results['best_model']
+            # Get the best model from grid search
+            model = model.get_best_model()
             model_params = grid_search_results['best_params']
             metrics = {
                 'aic': grid_search_results['best_aic'],
@@ -389,16 +402,29 @@ def main():
         else:
             # Train with suggested parameters
             logger.info(f"Training SARIMA model with parameters: {suggested_params}")
-            model = TimeSeriesModel(
-                model_type='sarima',
-                **{**config['model'], **suggested_params}
-            )
+            
+            # Update model configuration with suggested parameters
+            filtered_config = {
+                'model_type': 'sarima',
+                **{k: v for k, v in config['model'].items() if k in valid_model_params},
+                **{k: v for k, v in suggested_params.items() if k in valid_model_params}
+            }
+            model.config.update(filtered_config)
             
             # Train model
             logger.info("Starting model training")
-            metrics = model.fit(train_data[config['model']['target_column']].values)
+            metrics = model.fit()  # No need to pass data again as it was provided during initialization
             model_params = suggested_params
             grid_search_results = None
+        
+        # Optimize non-structural hyperparameters if enabled
+        if optimize_hyperparameters:
+            logger.info("Starting hyperparameter optimization with Optuna")
+            metrics = model.fit_with_optuna(
+                n_trials=config['model']['optimization'].get('n_trials', 100),
+                timeout=config['model']['optimization'].get('timeout', 600)
+            )
+            logger.info(f"Hyperparameter optimization completed. Best parameters: {model.config}")
         
         # Handle post-training tasks
         model_summary = handle_post_training(

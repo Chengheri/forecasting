@@ -16,18 +16,17 @@ from datetime import datetime
 logger = Logger()
 
 class AdvancedPreprocessor:
-    def __init__(self, config: Dict[str, Any], experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None, run_id: Optional[str] = None):
+    def __init__(self, config: Dict[str, Any], tracker: Optional[MLflowTracker] = None, experiment_name: str = "electricity_forecasting"):
         """Initialize the advanced preprocessor.
         
         Args:
             config: Dictionary containing preprocessing configuration
-            experiment_name: Name of the MLflow experiment
-            run_name: Optional name for the MLflow run
-            run_id: Optional ID for the MLflow run
+            tracker: MLflow tracker instance (optional)
+            experiment_name: Name of the MLflow experiment (used only if tracker is None)
         """
         self.config = config
         self.logger = Logger()
-        self.tracker = PreprocessorTracker(experiment_name=experiment_name, run_name=run_name, run_id=run_id)
+        self.tracker = tracker if tracker else PreprocessorTracker(experiment_name=experiment_name)
         self.pipeline_steps = []
         self.scaler = StandardScaler()
         self.anomaly_detectors = {}

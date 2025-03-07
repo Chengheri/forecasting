@@ -10,18 +10,17 @@ from .mlflow_utils import MLflowTracker
 logger = Logger()
 
 class DataPreprocessor:
-    def __init__(self, config: Dict[str, Any], experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None, run_id: Optional[str] = None):
+    def __init__(self, config: Dict[str, Any], tracker: Optional[MLflowTracker] = None, experiment_name: str = "electricity_forecasting"):
         """Initialize the data preprocessor.
         
         Args:
             config: Dictionary containing preprocessing configuration
-            experiment_name: Name of the MLflow experiment
-            run_name: Name of the MLflow run (optional)
-            run_id: ID of the MLflow run (optional)
+            tracker: MLflow tracker instance (optional)
+            experiment_name: Name of the MLflow experiment (used only if tracker is None)
         """
         self.config = config
         self.scaler = None
-        self.tracker = PreprocessorTracker(experiment_name=experiment_name, run_name=run_name, run_id=run_id)
+        self.tracker = tracker if tracker else PreprocessorTracker(experiment_name=experiment_name)
         self.pipeline_steps = []
         
     def train_test_split_timeseries(self, 
@@ -359,9 +358,7 @@ class DataPreprocessor:
                 from .advanced_preprocessing import AdvancedPreprocessor
                 advanced_preprocessor = AdvancedPreprocessor(
                     config=outlier_config,
-                    experiment_name=self.tracker.experiment_name,
-                    run_name=self.tracker.current_run.info.run_name if self.tracker.current_run else None,
-                    run_id=self.tracker.current_run.info.run_id if self.tracker.current_run else None
+                    tracker=self.tracker
                 )
                 
                 # Process anomalies (detect and optionally clean)
@@ -552,5 +549,5 @@ class DataPreprocessor:
 
         # Add prefix to all stats
         prefixed_stats = {f"preprocessing.data.{k}": v for k, v in stats.items()}
-        self.tracker.log_params_safely(prefixed_stats)
+        #self.tracker.log_params_safely(prefixed_stats)
         return stats 
