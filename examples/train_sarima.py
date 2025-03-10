@@ -153,7 +153,10 @@ def handle_post_training(model, model_params: dict, metrics: dict, train_data: p
             confidence_intervals = None
     
     # Create model-specific directory name
-    model_name = f"sarima_p{model_params['p']}_d{model_params['d']}_q{model_params['q']}_P{model_params['P']}_D{model_params['D']}_Q{model_params['Q']}_s{model_params['s']}"
+    if model_params.get('model_type') == 'sarima':
+        model_name = f"sarima_p{model_params['p']}_d{model_params['d']}_q{model_params['q']}_P{model_params['P']}_D{model_params['D']}_Q{model_params['Q']}_s{model_params['s']}"
+    else:
+        model_name = f"arima_p{model_params['p']}_d{model_params['d']}_q{model_params['q']}"
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     # Create model path and analysis paths
@@ -308,7 +311,7 @@ def handle_post_training(model, model_params: dict, metrics: dict, train_data: p
 
 @log_execution_time
 def main():
-    """Main function to train and evaluate SARIMA model."""
+    """Main function to train and evaluate ARIMA/SARIMA model."""
     # Load configuration
     with open('config/config.json', 'r') as f:
         config = json.load(f)
@@ -316,7 +319,8 @@ def main():
     # Get optimization settings from config
     use_grid_search = config['model'].get('use_grid_search', False)
     optimize_hyperparameters = config['model'].get('optimize_hyperparameters', False)
-    logger.info(f"Using grid search: {use_grid_search}, hyperparameter optimization: {optimize_hyperparameters}")
+    model_type = config['model'].get('model_type', 'sarima').lower()
+    logger.info(f"Training {model_type.upper()} model with grid search: {use_grid_search}, hyperparameter optimization: {optimize_hyperparameters}")
     
     # Initialize MLflow tracking
     run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -341,6 +345,14 @@ def main():
         # Get suggested parameters and stationarity results
         suggested_params, stationarity_results = get_suggested_parameters(data[config['model']['target_column']], config)
         
+        # Adjust suggested parameters based on model type
+        if model_type == 'arima':
+            # Remove seasonal parameters for ARIMA
+            suggested_params = {k: v for k, v in suggested_params.items() if k in ['p', 'd', 'q']}
+            if 'grid_search' in config:
+                config['grid_search']['param_grid'] = {k: v for k, v in config['grid_search']['param_grid'].items() 
+                                                     if k in ['p', 'd', 'q']}
+        
         # Split data using preprocessor's method
         logger.info(f"Splitting time series data with train_ratio={config['preprocessing']['train_ratio']}, validation_ratio={config['preprocessing'].get('validation_ratio', 0.0)}, gap={config['preprocessing'].get('gap', 0)}")
         train_data, test_data = preprocessor.train_test_split_timeseries(
@@ -363,12 +375,14 @@ def main():
         logger.info(f"Test target stats - Mean: {test_data[target_col].mean():.4f}, Std: {test_data[target_col].std():.4f}, Min: {test_data[target_col].min():.4f}, Max: {test_data[target_col].max():.4f}")
         
         # Initialize model with data
-        valid_model_params = {'p', 'd', 'q', 'P', 'D', 'Q', 's', 'maxiter', 'method', 'trend',
+        valid_model_params = {'p', 'd', 'q', 'method', 'trend',
                             'enforce_stationarity', 'enforce_invertibility', 'concentrate_scale'}
+        if model_type == 'sarima':
+            valid_model_params.update({'P', 'D', 'Q', 's', 'maxiter'})
         
         model = TimeSeriesModel(
             config={
-                'model_type': 'sarima',
+                'model_type': model_type,
                 **{k: v for k, v in config['model'].items() if k in valid_model_params}
             },
             tracker=tracker,
@@ -401,11 +415,11 @@ def main():
             
         else:
             # Train with suggested parameters
-            logger.info(f"Training SARIMA model with parameters: {suggested_params}")
+            logger.info(f"Training {model_type.upper()} model with suggested parameters: {suggested_params}")
             
             # Update model configuration with suggested parameters
             filtered_config = {
-                'model_type': 'sarima',
+                'model_type': model_type,
                 **{k: v for k, v in config['model'].items() if k in valid_model_params},
                 **{k: v for k, v in suggested_params.items() if k in valid_model_params}
             }

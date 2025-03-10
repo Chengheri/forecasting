@@ -12,7 +12,7 @@ from backend.app.utils.logger import Logger
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.tsa.stattools import acf, pacf
 from statsmodels.tsa.stattools import adfuller, kpss
-from typing import Dict, Tuple, Union, Any
+from typing import Dict, Tuple, Union, Any, Optional
 import json
 
 # Initialize logger
@@ -338,70 +338,92 @@ def analyze_model_results(actual_values, predicted_values, timestamps, confidenc
     
     return metrics 
 
+def is_stationary(data: Union[np.ndarray, pd.Series], alpha: float = 0.05) -> Dict[str, Any]:
+    """Check if a time series is stationary using ADF and KPSS tests.
+    
+    Args:
+        data: Time series data to analyze
+        alpha: Significance level for statistical tests
+        
+    Returns:
+        Dict containing test results and overall stationarity assessment
+    """
+    try:
+        # Convert data to numpy array if needed
+        if isinstance(data, pd.Series):
+            data = data.values
+            
+        # Perform ADF test (null hypothesis: non-stationary)
+        adf_result = adfuller(data)
+        adf_pvalue = adf_result[1]
+        
+        # Perform KPSS test (null hypothesis: stationary)
+        kpss_result = kpss(data)
+        kpss_pvalue = kpss_result[1]
+        
+        # Determine stationarity based on both tests
+        is_stationary_bool = bool(adf_pvalue < alpha and kpss_pvalue >= alpha)
+        
+        return {
+            'is_stationary': is_stationary_bool,
+            'adf_pvalue': adf_pvalue,
+            'kpss_pvalue': kpss_pvalue,
+            'adf_result': adf_result,
+            'kpss_result': kpss_result
+        }
+    except Exception as e:
+        logger.warning(f"Error in stationarity test: {str(e)}")
+        return {
+            'is_stationary': False,
+            'error': str(e)
+        }
+
 def check_stationarity(data: Union[np.ndarray, pd.Series], 
                       regression: str = 'c',
                       nlags: str = 'aic',
                       kpss_regression: str = 'c',
                       kpss_nlags: str = 'auto') -> Dict[str, Dict[str, Union[float, bool]]]:
-    """
-    Check if a time series is stationary using ADF and KPSS tests.
-    
-    Args:
-        data (Union[np.ndarray, pd.Series]): Time series data to analyze
-        regression (str): Regression type for ADF test ('c': constant, 'ct': constant and trend, 'nc': no constant)
-        nlags (str): Number of lags for ADF test ('aic', 'bic', 't-stat', or integer)
-        kpss_regression (str): Regression type for KPSS test ('c': constant, 'ct': constant and trend)
-        kpss_nlags (str): Number of lags for KPSS test ('auto' or integer)
-    
-    Returns:
-        Dict containing test results and stationarity assessment
-    """
+    """Check if a time series is stationary using ADF and KPSS tests."""
     logger.info("Performing stationarity tests on the time series")
     
-    # Convert data to numpy array if it's a pandas Series
-    if isinstance(data, pd.Series):
-        data = data.values
-    
-    # Perform ADF test
-    adf_result = adfuller(data, regression=regression, autolag=nlags)
-    adf_pvalue = adf_result[1]
-    adf_critical_values = adf_result[4]
-    
-    # Perform KPSS test
-    kpss_result = kpss(data, regression=kpss_regression, nlags=kpss_nlags)
-    kpss_pvalue = kpss_result[1]
-    kpss_critical_values = kpss_result[3]
-    
-    # Determine stationarity based on both tests
-    is_stationary = bool(adf_pvalue < 0.05 and kpss_pvalue > 0.05)
-    
-    # Create detailed results dictionary
-    results = {
-        'adf_test': {
-            'test_statistic': float(adf_result[0]),
-            'pvalue': float(adf_pvalue),
-            'critical_values': {k: float(v) for k, v in adf_critical_values.items()},
-            'is_stationary': bool(adf_pvalue < 0.05)
-        },
-        'kpss_test': {
-            'test_statistic': float(kpss_result[0]),
-            'pvalue': float(kpss_pvalue),
-            'critical_values': {k: float(v) for k, v in kpss_critical_values.items()},
-            'is_stationary': bool(kpss_pvalue > 0.05)
-        },
-        'overall_assessment': {
-            'is_stationary': is_stationary,
-            'confidence': 'high' if is_stationary else 'low',
-            'recommendation': 'No differencing needed' if is_stationary else 'Consider differencing'
+    try:
+        # Get stationarity test results
+        stat_results = is_stationary(data)
+        
+        if 'error' in stat_results:
+            raise ValueError(f"Stationarity test failed: {stat_results['error']}")
+        
+        # Create detailed results dictionary
+        results = {
+            'adf_test': {
+                'test_statistic': float(stat_results['adf_result'][0]),
+                'pvalue': float(stat_results['adf_pvalue']),
+                'critical_values': {k: float(v) for k, v in stat_results['adf_result'][4].items()},
+                'is_stationary': bool(stat_results['adf_pvalue'] < 0.05)
+            },
+            'kpss_test': {
+                'test_statistic': float(stat_results['kpss_result'][0]),
+                'pvalue': float(stat_results['kpss_pvalue']),
+                'critical_values': {k: float(v) for k, v in stat_results['kpss_result'][3].items()},
+                'is_stationary': bool(stat_results['kpss_pvalue'] > 0.05)
+            },
+            'overall_assessment': {
+                'is_stationary': stat_results['is_stationary'],
+                'confidence': 'high' if stat_results['is_stationary'] else 'low',
+                'recommendation': 'No differencing needed' if stat_results['is_stationary'] else 'Consider differencing'
+            }
         }
-    }
-    
-    # Log the results
-    logger.info(f"Stationarity test results: {'Stationary' if is_stationary else 'Non-stationary'}")
-    logger.info(f"ADF test p-value: {adf_pvalue:.4f}")
-    logger.info(f"KPSS test p-value: {kpss_pvalue:.4f}")
-    
-    return results 
+        
+        # Log the results
+        logger.info(f"Stationarity test results: {'Stationary' if stat_results['is_stationary'] else 'Non-stationary'}")
+        logger.info(f"ADF test p-value: {stat_results['adf_pvalue']:.4f}")
+        logger.info(f"KPSS test p-value: {stat_results['kpss_pvalue']:.4f}")
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error in check_stationarity: {str(e)}")
+        raise
 
 def get_suggested_parameters(data: pd.Series, config: dict) -> Dict[str, Any]:
     """Get suggested SARIMA parameters based on time series analysis.
@@ -429,3 +451,45 @@ def get_suggested_parameters(data: pd.Series, config: dict) -> Dict[str, Any]:
     suggested_params = suggest_sarima_parameters(acf_data, pacf_data, stationarity_results)
     
     return suggested_params, stationarity_results 
+
+def remove_non_stationarity(data: pd.Series, max_diff: int = 2, seasonal_diff: bool = True, 
+                          seasonal_period: Optional[int] = None) -> Tuple[pd.Series, Dict[str, int]]:
+    """Remove non-stationarity through differencing."""
+    def infer_seasonal_period(x: pd.Series) -> int:
+        """Infer seasonal period from data."""
+        if isinstance(x.index, pd.DatetimeIndex):
+            if x.index.freq == 'H' or x.index.inferred_freq == 'H':
+                return 24  # Hourly data
+            elif x.index.freq == 'D' or x.index.inferred_freq == 'D':
+                return 7   # Daily data
+            elif x.index.freq == 'M' or x.index.inferred_freq == 'M':
+                return 12  # Monthly data
+        return 1  # No seasonality
+    
+    result = data.copy()
+    params = {'d': 0, 'D': 0}
+    
+    # Apply seasonal differencing first if requested
+    if seasonal_diff:
+        if seasonal_period is None:
+            seasonal_period = infer_seasonal_period(data)
+        
+        if seasonal_period > 1:
+            seasonal_diff_data = result.diff(seasonal_period).dropna()
+            if is_stationary(seasonal_diff_data)['is_stationary']:
+                result = seasonal_diff_data
+                params['D'] = 1
+                logger.info(f"Applied seasonal differencing with period {seasonal_period}")
+    
+    # Apply regular differencing until stationary or max_diff reached
+    for d in range(max_diff + 1):
+        stat_results = is_stationary(result)
+        if stat_results['is_stationary']:
+            break
+        
+        if d < max_diff:
+            result = result.diff().dropna()
+            params['d'] = d + 1
+            logger.info(f"Applied regular differencing (order {d + 1})")
+    
+    return result, params 

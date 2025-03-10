@@ -11,6 +11,7 @@
             "contamination": 0.1
         },
         "remove_anomalies": true,
+        "remove_non_stationarity": true,
         "add_time_features": true,
         "add_lag_features": true,
         "lag_features": [1, 2, 3, 24, 168],
@@ -39,8 +40,8 @@
         "s": 24,
         "maxiter": 50,
         "method": "lbfgs",
-        "trend": "c",
-        "enforce_stationarity": true,
+        "trend": "t",
+        "enforce_stationarity": false,
         "enforce_invertibility": true,
         "concentrate_scale": false
     },

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from ..utils.logger import Logger
 from .trackers import PreprocessorTracker
 from .mlflow_utils import MLflowTracker
+from statsmodels.tsa.stattools import adfuller, kpss
 
 logger = Logger()
 
