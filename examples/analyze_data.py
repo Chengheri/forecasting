@@ -14,9 +14,9 @@ from backend.app.utils.logger import Logger
 # Initialize logger
 logger = Logger()
 
-def load_and_prepare_data(filename: str) -> pd.DataFrame:
-    """Load and prepare the data for analysis."""
-    logger.info(f"Loading and preparing data from {filename}")
+def load_and_preprocess_data(filename: str) -> pd.DataFrame:
+    """Load and preprocess data from a CSV file."""
+    logger.info(f"Loading and preprocessing data from {filename}")
     try:
         df = pd.read_csv(filename)
         df['date'] = pd.to_datetime(df['date'])
@@ -247,6 +247,9 @@ def generate_summary_statistics(df: pd.DataFrame, output_dir: str):
         raise
 
 def main():
+    """Main function to run the analysis."""
+    logger.info("Starting data analysis")
+    
     try:
         # Set up directories
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -257,11 +260,9 @@ def main():
         os.makedirs(analysis_dir, exist_ok=True)
         os.makedirs(logs_dir, exist_ok=True)
         
-        logger.info("Starting data analysis")
-        
         # Load data from data/examples directory
         data_path = os.path.join(project_root, 'data', 'examples', 'consumption_data_france.csv')
-        df = load_and_prepare_data(data_path)
+        df = load_and_preprocess_data(data_path)
         
         # Generate and save plots
         plot_time_series(df, analysis_dir)

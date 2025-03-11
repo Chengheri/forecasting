@@ -1,4 +1,9 @@
 {
+    "data": {
+        "path": "data/examples/consumption_data_france.csv",
+        "index_column": "date",
+        "target_column": "value"
+    },
     "preprocessing": {
         "train_ratio": 0.8,
         "validation_ratio": 0.0,
@@ -18,12 +23,11 @@
         "add_rolling_features": true,
         "rolling_windows": [24, 168],
         "rolling_functions": ["mean", "std", "min", "max"],
-        "scale_features": true,
+        "scale_features": false,
         "scaling_method": "standard",
         "columns_to_scale": ["value", "temperature", "humidity"]
     },
     "model": {
-        "target_column": "value",
         "model_type": "sarima",
         "use_grid_search": false,
         "optimize_hyperparameters": true,
@@ -66,7 +70,6 @@
         "register_model": true
     },
     "paths": {
-        "data": "data/examples/consumption_data_france.csv",
         "models_dir": "data/models",
         "analysis_dir": "analysis"
     },
@@ -76,7 +79,10 @@
             "residuals_analysis": true,
             "metrics_over_time": true,
             "seasonal_decomposition": true,
-            "rolling_window": 24
+            "rolling_window": 24,
+            "maxlags": 48,
+            "seasonal_period": 24,
+            "significance_level": 0.05
         },
         "metrics": [
             "rmse",

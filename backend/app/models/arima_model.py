@@ -9,7 +9,7 @@ import warnings
 from ..utils.logger import Logger
 from ..utils.metrics import ForecastingMetrics
 from ..utils.trackers import ARIMATracker
-from ..utils.analysis_utils import remove_non_stationarity
+from ..utils.analyzer import Analyzer
 import multiprocessing as mp
 from multiprocessing import Process, Queue
 import signal
@@ -25,6 +25,45 @@ logger = Logger()
 
 class TimeSeriesModel:
     """ARIMA/SARIMA time series model with unified tracking."""
+    
+    # Default model configurations
+    DEFAULT_CONFIG = {
+        'model_type': 'sarima',
+        'p': 1,
+        'd': 1,
+        'q': 1,
+        'P': 0,
+        'D': 0,
+        'Q': 0,
+        's': 24,
+        'maxiter': 50,
+        'method': 'lbfgs',
+        'trend': None,
+        'enforce_stationarity': True,
+        'enforce_invertibility': True,
+        'concentrate_scale': False
+    }
+    
+    # Model type specific parameters
+    ARIMA_PARAMS = {'p', 'd', 'q', 'method', 'trend', 'enforce_stationarity', 'enforce_invertibility', 'concentrate_scale'}
+    SARIMA_PARAMS = ARIMA_PARAMS | {'P', 'D', 'Q', 's', 'maxiter'}
+    
+    # Optimization configurations
+    OPTUNA_PARAMS = {
+        'common': {
+            'trend': ['n', 'c', 't', 'ct'],
+            'enforce_stationarity': [True, False],
+            'enforce_invertibility': [True, False],
+            'concentrate_scale': [True, False]
+        },
+        'sarima': {
+            'method': ['lbfgs', 'bfgs', 'newton', 'cg', 'nm', 'powell'],
+            'maxiter': (50, 500)
+        },
+        'arima': {
+            'method': ['statespace', 'innovations_mle', 'hannan_rissanen']
+        }
+    }
     
     def __init__(
         self,
@@ -58,25 +97,8 @@ class TimeSeriesModel:
         logger.info("Initializing TimeSeriesModel")
         logger.debug(f"Configuration provided: {config}")
         
-        # Default configuration
-        self.config = {
-            'model_type': 'sarima',
-            'p': 1,
-            'd': 1,
-            'q': 1,
-            'P': 0,
-            'D': 0,
-            'Q': 0,
-            's': 24,
-            'maxiter': 50,
-            'method': 'lbfgs',
-            'trend': None,
-            'enforce_stationarity': True,
-            'enforce_invertibility': True,
-            'concentrate_scale': False
-        }
-        
-        # Update with provided configuration
+        # Initialize configuration with defaults
+        self.config = self.DEFAULT_CONFIG.copy()
         if config:
             logger.debug("Updating default configuration with provided values")
             self.config.update(config)
@@ -87,6 +109,20 @@ class TimeSeriesModel:
         self.fitted_model = None
         self._training_data = data  # Store the training data
         
+        # Initialize analyzer
+        self.analyzer = Analyzer(config=self.config, tracker=self.tracker)
+        
+        self._log_initialization()
+        
+        # Initialize model with data if provided
+        if data is not None:
+            logger.info("Initializing model with provided data")
+            ts = self.analyzer.format_input_data(data, force_preparation=force_preparation)
+            self.initialize_model(ts)
+            logger.info("Model initialization with data completed")
+    
+    def _log_initialization(self) -> None:
+        """Log initialization parameters."""
         logger.info(f"Initialized {self.config['model_type'].upper()} model with parameters:")
         logger.info(f"Order parameters: p={self.config['p']}, d={self.config['d']}, q={self.config['q']}")
         if self.config['model_type'] == 'sarima':
@@ -94,151 +130,55 @@ class TimeSeriesModel:
         
         if self.tracker:
             logger.debug("Logging model parameters to tracker")
-            self.tracker.log_model_params(self.config)
             self.tracker.log_params_safely({
                 'model.type': self.config['model_type']
             })
-            
-        # Initialize model with data if provided
-        if data is not None:
-            logger.info("Initializing model with provided data")
-            ts = self.prepare_data(data, force_preparation=force_preparation)
-            self.initialize_model(ts)
-            logger.info("Model initialization with data completed")
     
-    def prepare_time_series_data(self, data: pd.Series) -> Tuple[pd.Series, Dict[str, int]]:
-        """Prepare time series data for modeling.
-        
-        Args:
-            data: Input time series data
-            
-        Returns:
-            Tuple of (prepared series, differencing parameters)
-        """
-        logger.info("Starting time series data preparation")
-        logger.debug(f"Input data shape: {data.shape}")
-        
-        try:
-            # Remove non-stationarity if requested
-            diff_params = {'d': 0, 'D': 0}
-            if self.config.get('remove_non_stationarity', True):
-                logger.info("Removing non-stationarity from data")
-                seasonal = self.config['model_type'] == 'sarima'
-                seasonal_period = self.config.get('s', None) if seasonal else None
-                
-                logger.debug(f"Seasonal differencing enabled: {seasonal}")
-                logger.debug(f"Seasonal period: {seasonal_period}")
-                
-                ts, diff_params = remove_non_stationarity(
-                    data,
-                    max_diff=self.config.get('max_diff', 2),
-                    seasonal_diff=seasonal,
-                    seasonal_period=seasonal_period
-                )
-                
-                logger.info(f"Non-stationarity removal completed. Differencing parameters: d={diff_params['d']}, D={diff_params['D']}")
-            else:
-                logger.info("Skipping non-stationarity removal")
-                ts = data
-            
-            logger.debug(f"Output data shape: {ts.shape}")
-            return ts, diff_params
-            
-        except Exception as e:
-            logger.error(f"Error in prepare_time_series_data: {str(e)}")
-            raise
+    def _get_valid_params(self) -> set:
+        """Get valid parameters for current model type."""
+        return self.SARIMA_PARAMS if self.config['model_type'] == 'sarima' else self.ARIMA_PARAMS
     
-    def prepare_data(self, data: Union[pd.DataFrame, pd.Series, np.ndarray], force_preparation: bool = False) -> pd.Series:
-        """Prepare time series data for modeling.
-        
-        Args:
-            data: Input data in various formats
-            force_preparation: If True, always process the data. If False, return pd.Series as is.
-        
-        Returns:
-            pd.Series: Prepared time series data
-        """
-        logger.info("Starting data preparation")
-        logger.debug(f"Input data type: {type(data)}")
-        
-        try:
-            # Convert input to pandas Series
-            if isinstance(data, np.ndarray):
-                logger.debug("Converting numpy array to pandas Series")
-                if data.ndim > 1:
-                    logger.debug("Flattening multi-dimensional array")
-                    data = data.ravel()
-                ts = pd.Series(data)
-            elif isinstance(data, pd.DataFrame):
-                logger.debug("Processing DataFrame")
-                if 'timestamp' in data.columns and 'consumption' in data.columns:
-                    logger.debug("Using timestamp and consumption columns")
-                    ts = data.set_index('timestamp')['consumption']
-                elif len(data.columns) == 1:
-                    logger.debug("Converting single-column DataFrame to Series")
-                    ts = data[data.columns[0]]
-                else:
-                    logger.error("Invalid DataFrame format")
-                    raise ValueError("DataFrame must contain 'timestamp' and 'consumption' columns or be single column")
-            elif isinstance(data, pd.Series):
-                logger.debug("Input is already a pandas Series")
-                ts = data
-            else:
-                logger.error(f"Unsupported data type: {type(data)}")
-                raise ValueError("Data must be pandas DataFrame, Series, or numpy array")
-            
-            # If data is already a Series and force_preparation is False, return as is
-            if isinstance(ts, pd.Series) and not force_preparation:
-                logger.info("Using Series as is (no preparation needed)")
-                return ts
-            
-            # Use prepare_time_series_data method
-            prepared_ts, diff_params = self.prepare_time_series_data(ts)
-            
-            # Update model configuration with differencing parameters
-            logger.info("Updating model configuration with differencing parameters")
-            self.config.update({
-                'd': diff_params['d'],
-                'D': diff_params['D'] if self.config['model_type'] == 'sarima' else 0
-            })
-            logger.debug(f"Updated configuration: d={diff_params['d']}, D={diff_params['D']}")
-            
-            return prepared_ts
-                
-        except Exception as e:
-            logger.error(f"Error in prepare_data: {str(e)}")
-            raise
+    def _get_fit_params(self) -> Dict[str, Any]:
+        """Get fit parameters based on model type."""
+        if self.config['model_type'] == 'sarima':
+            return {
+                'maxiter': self.config.get('maxiter', 50),
+                'method': self.config.get('method', 'lbfgs'),
+                'disp': False
+            }
+        return {
+            'method': self.config.get('method', 'statespace')
+        }
+    
+    def _create_model_instance(self, ts: pd.Series) -> Union[ARIMA, SARIMAX]:
+        """Create ARIMA or SARIMA model instance based on configuration."""
+        if self.config['model_type'] == 'arima':
+            return ARIMA(
+                ts,
+                order=(self.config['p'], self.config['d'], self.config['q']),
+                trend=self.config.get('trend'),
+                enforce_stationarity=self.config.get('enforce_stationarity', True),
+                enforce_invertibility=self.config.get('enforce_invertibility', True),
+                concentrate_scale=self.config.get('concentrate_scale', False),
+            )
+        else:  # sarima
+            return SARIMAX(
+                ts,
+                order=(self.config['p'], self.config['d'], self.config['q']),
+                seasonal_order=(self.config['P'], self.config['D'], self.config['Q'], self.config['s']),
+                trend=self.config.get('trend'),
+                enforce_stationarity=self.config.get('enforce_stationarity', True),
+                enforce_invertibility=self.config.get('enforce_invertibility', True),
+                concentrate_scale=self.config.get('concentrate_scale', False),
+            )
     
     def initialize_model(self, ts: pd.Series) -> None:
         """Initialize ARIMA or SARIMA model with configured parameters."""
         logger.info("Initializing model with prepared data")
         try:
-            if self.config['model_type'] == 'arima':
-                logger.info(f"Initializing ARIMA(p={self.config['p']}, d={self.config['d']}, q={self.config['q']})")
-                self.model = ARIMA(
-                    ts,
-                    order=(self.config['p'], self.config['d'], self.config['q']),
-                    trend=self.config.get('trend', None),
-                    enforce_stationarity=self.config.get('enforce_stationarity', True),
-                    enforce_invertibility=self.config.get('enforce_invertibility', True),
-                    concentrate_scale=self.config.get('concentrate_scale', False),
-                )
-            else:  # sarima
-                logger.info(
-                    f"Initializing SARIMA(p={self.config['p']}, d={self.config['d']}, q={self.config['q']}) "
-                    f"x (P={self.config['P']}, D={self.config['D']}, Q={self.config['Q']}, s={self.config['s']})"
-                )
-                self.model = SARIMAX(
-                    ts,
-                    order=(self.config['p'], self.config['d'], self.config['q']),
-                    seasonal_order=(self.config['P'], self.config['D'], self.config['Q'], self.config['s']),
-                    trend=self.config.get('trend', None),
-                    enforce_stationarity=self.config.get('enforce_stationarity', True),
-                    enforce_invertibility=self.config.get('enforce_invertibility', True),
-                    concentrate_scale=self.config.get('concentrate_scale', False),
-                )
+            self.model = self._create_model_instance(ts)
             self._training_data = ts  # Update training data
-            
+            logger.info(f"Model initialized successfully: {self.config['model_type'].upper()}")
         except Exception as e:
             logger.error(f"Error initializing model: {str(e)}")
             raise
@@ -267,25 +207,13 @@ class TimeSeriesModel:
                     logger.error("No data provided for training")
                     raise ValueError("Data must be provided either during initialization or fit")
                 logger.info("Preparing new data for training")
-                ts = self.prepare_data(data, force_preparation=force_preparation)
+                ts = self.analyzer.format_input_data(data, force_preparation=force_preparation)
                 logger.info("Initializing model with prepared data")
                 self.initialize_model(ts)
             
             # Prepare fit parameters based on model type
             logger.info("Preparing fit parameters")
-            fit_params = {}
-            if self.config['model_type'] == 'sarima':
-                fit_params = {
-                    'maxiter': self.config.get('maxiter', 50),
-                    'method': self.config.get('method', 'lbfgs'),
-                    'disp': False
-                }
-                logger.debug(f"SARIMA fit parameters: {fit_params}")
-            else:  # ARIMA
-                fit_params = {
-                    'method': self.config.get('method', 'statespace')
-                }
-                logger.debug(f"ARIMA fit parameters: {fit_params}")
+            fit_params = self._get_fit_params()
             
             # Fit model with appropriate parameters
             logger.info("Fitting model")
@@ -611,7 +539,7 @@ class TimeSeriesModel:
                     logger.error("No data provided for grid search")
                     raise ValueError("Data must be provided either during initialization or grid search")
                 logger.info("Preparing new data for grid search")
-                ts = self.prepare_data(data, force_preparation=force_preparation)
+                ts = self.analyzer.format_input_data(data, force_preparation=force_preparation)
             
             best_aic = float('inf')
             best_bic = float('inf')

@@ -332,7 +332,7 @@ class DataPreprocessor:
         """Inverse transform normalized data."""
         return self.scaler.inverse_transform(data.reshape(-1, 1)).reshape(-1)
     
-    def prepare_data(self, df: pd.DataFrame, target_column: str = 'value', create_sequences: bool = False, seq_length: int = 24) -> Union[pd.DataFrame, Tuple[np.ndarray, np.ndarray]]:
+    def preprocess_data(self, df: pd.DataFrame, target_column: str = 'value', create_sequences: bool = False, seq_length: int = 24) -> Union[pd.DataFrame, Tuple[np.ndarray, np.ndarray]]:
         """Prepare data for modeling with comprehensive preprocessing options."""
         logger.info("Starting data preparation")
         try:
@@ -552,3 +552,5 @@ class DataPreprocessor:
         prefixed_stats = {f"preprocessing.data.{k}": v for k, v in stats.items()}
         #self.tracker.log_params_safely(prefixed_stats)
         return stats 
+
+    

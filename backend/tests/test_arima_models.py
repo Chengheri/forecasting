@@ -46,7 +46,7 @@ def test_data_preparation(sample_data):
     """Test data preparation functionality."""
     logger.info("Testing data preparation")
     model = TimeSeriesModel({'model_type': 'arima'})
-    ts = model.prepare_data(sample_data)
+    ts = model.analyzer.format_input_data(sample_data)
     
     assert isinstance(ts, pd.Series)
     assert ts.index.name == 'timestamp'
