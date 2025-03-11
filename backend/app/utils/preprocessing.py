@@ -157,7 +157,7 @@ class DataPreprocessor:
                 })
         
         # Log split information to MLflow
-        self.tracker.log_params_safely(split_info)
+        #self.tracker.log_params_safely(split_info)
         
         # Add split step to pipeline
         self.pipeline_steps.append({
@@ -222,9 +222,8 @@ class DataPreprocessor:
                 'cyclical_features': ['hour_sin', 'hour_cos', 'day_sin', 'day_cos', 'month_sin', 'month_cos']
             }
             self.tracker.log_feature_engineering(
-                added_features=time_features['basic_features'] + time_features['cyclical_features'],
-                lag_features=[],
-                rolling_features=[]
+                feature_type='time',
+                added_features=time_features['basic_features'] + time_features['cyclical_features']
             )
             
             logger.info("Time-based features added successfully")
@@ -246,9 +245,8 @@ class DataPreprocessor:
             
             # Track lag features
             self.tracker.log_feature_engineering(
-                added_features=[],
-                lag_features=lag_features,
-                rolling_features=[]
+                feature_type='lag',
+                added_features=lag_features
             )
             
             logger.info(f"Added {len(lag_periods)} lag features")
@@ -279,9 +277,8 @@ class DataPreprocessor:
             
             # Track rolling features
             self.tracker.log_feature_engineering(
-                added_features=[],
-                lag_features=[],
-                rolling_features=rolling_features
+                feature_type='rolling',
+                added_features=rolling_features
             )
             
             logger.info(f"Added rolling features for {len(windows)} window sizes")

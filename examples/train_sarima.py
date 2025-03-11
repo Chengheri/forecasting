@@ -34,10 +34,10 @@ def main():
         
         # Initialize pipeline and process data
         pipeline = SARIMAPipeline(config=config, tracker=tracker)
-        data = process_data(pipeline)
+        train_data, test_data, suggested_params, stationarity_results = process_data(pipeline)
         
         # Train and evaluate model
-        model_results = train_and_evaluate_model(pipeline, data)
+        model_results = train_and_evaluate_model(pipeline, train_data, test_data, suggested_params, stationarity_results)
         model, model_params, metrics, grid_search_results, mean_forecast, confidence_intervals = model_results
         
         # Save model and analyze results
@@ -46,14 +46,12 @@ def main():
         model_path, analysis_path, model_file_path, analysis_results = model_artifacts
         
         # Track results and create summary
-        track_and_summarize_results(pipeline, model_params, metrics, analysis_results, stationarity_results,
+        model_summary = track_and_summarize_results(pipeline, model_params, metrics, analysis_results, stationarity_results,
                                   analysis_path, model_file_path, model_path, train_data, test_data,
                                   grid_search_results)
         
         # Log execution time and MLflow info
         log_execution_info(tracker, run_timestamp)
-        
-        return model_summary
         
     except Exception as e:
         logger.error(f"Error in main execution: {str(e)}")
@@ -113,7 +111,7 @@ def save_model_artifacts(pipeline: SARIMAPipeline,
                         stationarity_results: Dict[str, Any]) -> Tuple:
     """Save model and generate analysis artifacts."""
     # Create directories
-    model_path, analysis_path, model_file_path = create_model_directories(model_params)
+    model_path, analysis_path, model_file_path = create_model_directories(pipeline.config['model']['model_type'], model_params)
     
     # Save model
     save_model(model, model_file_path, model_params)
@@ -129,7 +127,7 @@ def save_model_artifacts(pipeline: SARIMAPipeline,
     return model_path, analysis_path, model_file_path, analysis_results
 
 
-def create_model_directories(model_params: Dict[str, Any]) -> Tuple[str, str, str]:
+def create_model_directories(model_type: str, model_params: Dict[str, Any]) -> Tuple[str, str, str]:
     """Create necessary directories for model artifacts.
     
     Args:
@@ -139,7 +137,7 @@ def create_model_directories(model_params: Dict[str, Any]) -> Tuple[str, str, st
         Tuple containing model path, analysis path, and model file path
     """
     # Create model-specific directory name
-    if model_params.get('model_type') == 'sarima':
+    if model_type == 'sarima':
         model_name = f"sarima_p{model_params['p']}_d{model_params['d']}_q{model_params['q']}_P{model_params['P']}_D{model_params['D']}_Q{model_params['Q']}_s{model_params['s']}"
     else:
         model_name = f"arima_p{model_params['p']}_d{model_params['d']}_q{model_params['q']}"
@@ -147,7 +145,7 @@ def create_model_directories(model_params: Dict[str, Any]) -> Tuple[str, str, st
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     model_path = os.path.join("data/models", model_name, timestamp)
     analysis_path = os.path.join(model_path, "analysis")
-    model_file_path = os.path.join(model_path, "model", "sarima_model.joblib")
+    model_file_path = os.path.join(model_path, "model", f"{model_type}_model.joblib")
     
     os.makedirs(os.path.join(model_path, "model"), exist_ok=True)
     os.makedirs(analysis_path, exist_ok=True)

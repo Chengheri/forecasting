@@ -41,13 +41,19 @@ class Analyzer:
     # Stationarity test configurations
     STATIONARITY_CONFIG = {
         'adf_regression': 'c',
-        'adf_maxlag': 'aic',
+        'adf_autolag': 'aic',
         'kpss_regression': 'c',
         'kpss_nlags': 'auto'
     }
 
     def __init__(self, config: Dict[str, Any], save_path: Optional[str] = None):
-        """Initialize the Analyzer with configuration and save path."""
+        """Initialize the Analyzer with configuration, save path, and tracker.
+        
+        Args:
+            config (Dict[str, Any]): Configuration dictionary
+            save_path (Optional[str]): Path to save analysis outputs
+            tracker (Optional[Any]): Tracker instance for logging metrics and parameters
+        """
         self.config = self.DEFAULT_ANALYSIS_CONFIG.copy()
         if config:
             self.config.update(config.get('analysis', {}))
@@ -321,7 +327,7 @@ class Analyzer:
             adf_result = adfuller(
                 data,
                 regression=self.STATIONARITY_CONFIG['adf_regression'],
-                maxlag=self.STATIONARITY_CONFIG['adf_maxlag']
+                autolag=self.STATIONARITY_CONFIG['adf_autolag']
             )
             
             kpss_result = kpss(
@@ -450,18 +456,13 @@ class Analyzer:
                 return 12  # Monthly data
         return 1  # No seasonality
 
-    def format_input_data(self, data: Union[pd.DataFrame, pd.Series, np.ndarray], 
-                         force_preparation: bool = False) -> pd.Series:
+    def format_input_data(self, data: Union[pd.DataFrame, pd.Series, np.ndarray]) -> pd.Series:
         """Format input data into a pandas Series."""
         logger.info("Starting data formatting")
         logger.debug(f"Input data type: {type(data)}")
         
         try:
             ts = self._convert_to_series(data)
-            
-            if isinstance(ts, pd.Series) and not force_preparation:
-                logger.info("Using Series as is (no preparation needed)")
-                return ts
             
             if self.config.get('remove_non_stationarity', True):
                 logger.info("Removing non-stationarity from data")
@@ -479,12 +480,6 @@ class Analyzer:
                 )
                 
                 logger.info(f"Non-stationarity removal completed. Differencing parameters: d={diff_params['d']}, D={diff_params['D']}")
-                
-                if hasattr(self, 'tracker'):
-                    self.tracker.log_params_safely({
-                        'preprocessing.differencing.d': diff_params['d'],
-                        'preprocessing.differencing.D': diff_params['D']
-                    })
             else:
                 logger.info("Skipping non-stationarity removal")
             

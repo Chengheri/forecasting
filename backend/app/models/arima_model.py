@@ -70,7 +70,6 @@ class TimeSeriesModel:
         config: Optional[Dict[str, Any]] = None,
         tracker: Optional[ARIMATracker] = None,
         data: Optional[Union[pd.DataFrame, pd.Series, np.ndarray]] = None,
-        force_preparation: bool = False
     ):
         """Initialize TimeSeriesModel with parameters and optionally with data.
         
@@ -104,20 +103,20 @@ class TimeSeriesModel:
             self.config.update(config)
             logger.debug(f"Final configuration: {self.config}")
         
-        self.tracker = tracker if tracker else ARIMATracker()
+        self.tracker = tracker
         self.model = None
         self.fitted_model = None
         self._training_data = data  # Store the training data
         
         # Initialize analyzer
-        self.analyzer = Analyzer(config=self.config, tracker=self.tracker)
+        self.analyzer = Analyzer(config=self.config)
         
         self._log_initialization()
         
         # Initialize model with data if provided
         if data is not None:
             logger.info("Initializing model with provided data")
-            ts = self.analyzer.format_input_data(data, force_preparation=force_preparation)
+            ts = self.analyzer.format_input_data(data)
             self.initialize_model(ts)
             logger.info("Model initialization with data completed")
     
@@ -228,12 +227,6 @@ class TimeSeriesModel:
                 "llf": self.fitted_model.llf
             }
             logger.debug(f"Model metrics: {metrics}")
-            
-            # Log training metrics
-            if self.tracker:
-                logger.debug("Logging training metrics to tracker")
-                self.tracker.log_training_metrics(metrics)
-            
             logger.info(f"Model training completed successfully")
             logger.info(f"Final metrics - AIC: {metrics['aic']:.2f}, BIC: {metrics['bic']:.2f}")
             return metrics
@@ -286,12 +279,7 @@ class TimeSeriesModel:
                 'r2': r2_score(y_true, y_pred)
             }
             
-            logger.debug(f"Calculated metrics: {metrics}")
-            
-            if self.tracker:
-                logger.debug("Logging forecast metrics to tracker")
-                self.tracker.log_forecast_metrics(metrics)
-            
+            logger.debug(f"Calculated metrics: {metrics}")   
             logger.info("Model evaluation completed successfully")
             return metrics
         except Exception as e:
@@ -315,12 +303,7 @@ class TimeSeriesModel:
             
             logger.info("Writing model to disk")
             joblib.dump(model_data, path)
-            logger.info("Model saved successfully")
-            
-            if self.tracker:
-                logger.debug("Logging model artifact to tracker")
-                self.tracker.log_artifact(path)
-                
+            logger.info("Model saved successfully")               
         except Exception as e:
             logger.error(f"Error saving model: {str(e)}")
             raise
@@ -452,7 +435,6 @@ class TimeSeriesModel:
                 config=temp_config,
                 tracker=self.tracker,
                 data=ts_data,
-                force_preparation=True
             )
             
             logger.debug("Setting up multiprocessing")
@@ -522,7 +504,6 @@ class TimeSeriesModel:
         max_iterations: Optional[int] = None,
         early_stopping: bool = True,
         early_stopping_patience: int = 5,
-        force_preparation: bool = False,
         timeout: int = 60
     ) -> Dict[str, Any]:
         """Perform grid search for best parameters with tracking."""
@@ -539,7 +520,7 @@ class TimeSeriesModel:
                     logger.error("No data provided for grid search")
                     raise ValueError("Data must be provided either during initialization or grid search")
                 logger.info("Preparing new data for grid search")
-                ts = self.analyzer.format_input_data(data, force_preparation=force_preparation)
+                ts = self.analyzer.format_input_data(data)
             
             best_aic = float('inf')
             best_bic = float('inf')
@@ -571,7 +552,6 @@ class TimeSeriesModel:
                     "grid_search.early_stopping": early_stopping,
                     "grid_search.patience": early_stopping_patience,
                     "grid_search.timeout": timeout,
-                    "model_type": self.config['model_type']  # Ensure model type is logged
                 })
             
             for i, params in enumerate(param_combinations, 1):
@@ -736,7 +716,6 @@ class TimeSeriesModel:
                     config=trial_config,
                     tracker=None,  # Don't track individual trials
                     data=self._training_data,
-                    force_preparation=True
                 )
                 
                 logger.info(f"Fitting model for trial {trial.number}")
@@ -753,7 +732,7 @@ class TimeSeriesModel:
         
         best_params = study.best_params
         logger.info(f"Best parameters found: {best_params}")
-        logger.debug(f"Best value (AIC): {study.best_value}")
+        logger.info(f"Best value (AIC): {study.best_value}")
         
         # Update model with best parameters
         self.config.update(best_params)

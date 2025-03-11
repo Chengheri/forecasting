@@ -14,7 +14,7 @@ from backend.app.utils.trackers import ARIMATracker
 from backend.app.utils.preprocessing import DataPreprocessor
 from backend.app.utils.logger import Logger
 from backend.app.utils.analyzer import Analyzer
-from backend.app.data.data_loader import DataLoader
+from backend.app.utils.data_loader import DataLoader
 
 logger = Logger()
 
@@ -46,6 +46,8 @@ def convert_to_native_types(obj: Any) -> Any:
         return int(obj)
     elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
         return float(obj)
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
     elif isinstance(obj, dict):
         return {str(key): convert_to_native_types(value) for key, value in obj.items()}
     elif isinstance(obj, (list, tuple)):
@@ -279,55 +281,40 @@ class SARIMAPipeline:
                 'metrics.training.aic': metrics['aic'],
                 'metrics.training.bic': metrics.get('bic', 0),
                 'metrics.training.hqic': metrics.get('hqic', 0),
-                'metrics.training.rmse': analysis_results['rmse'],
-                'metrics.training.mae': analysis_results['mae'],
-                'metrics.training.mape': analysis_results['mape'],
-                'metrics.training.r2': analysis_results.get('r2', 0),
-                'metrics.training.directional_accuracy': analysis_results.get('directional_accuracy', 0)
             }
             self.tracker.log_metrics_safely(training_metrics)
-            
-            # Log model diagnostics
-            diagnostic_metrics = {
-                'metrics.diagnostics.residuals_mean': analysis_results.get('residuals_mean', 0),
-                'metrics.diagnostics.residuals_std': analysis_results.get('residuals_std', 0),
-                'metrics.diagnostics.residuals_skewness': analysis_results.get('residuals_skewness', 0),
-                'metrics.diagnostics.residuals_kurtosis': analysis_results.get('residuals_kurtosis', 0),
-                'metrics.diagnostics.residuals_autocorrelation': analysis_results.get('residuals_autocorrelation', 0),
-                'metrics.diagnostics.residuals_normal': analysis_results.get('residuals_normal', False),
-                'metrics.diagnostics.residuals_independent': analysis_results.get('residuals_independent', False)
+            # Log test metrics
+            test_metrics = {
+                'metrics.test.rmse': analysis_results['rmse'],
+                'metrics.test.mae': analysis_results['mae'],
+                'metrics.test.mape': analysis_results['mape'],
+                'metrics.test.r2': analysis_results.get('r2', 0),
+                'metrics.test.directional_accuracy': analysis_results.get('directional_accuracy', 0),
+                'metrics.test.residuals_mean': analysis_results.get('residuals_mean', 0),
+                'metrics.test.residuals_std': analysis_results.get('residuals_std', 0),
+                'metrics.test.residuals_skewness': analysis_results.get('residuals_skewness', 0),
+                'metrics.test.residuals_kurtosis': analysis_results.get('residuals_kurtosis', 0),
+                'metrics.test.residuals_autocorrelation': analysis_results.get('residuals_autocorrelation', 0),
+                'metrics.test.residuals_normal': analysis_results.get('residuals_normal', False),
+                'metrics.test.residuals_independent': analysis_results.get('residuals_independent', False)
             }
-            self.tracker.log_metrics_safely(diagnostic_metrics)
-            
-            # Log forecast metrics
-            forecast_metrics = {
-                'metrics.forecast.rmse': analysis_results['rmse'],
-                'metrics.forecast.mae': analysis_results['mae'],
-                'metrics.forecast.mape': analysis_results['mape'],
-                'metrics.forecast.r2': analysis_results.get('r2', 0)
-            }
-            self.tracker.log_metrics_safely(forecast_metrics)
+            self.tracker.log_metrics_safely(test_metrics)
             
             # Log stationarity analysis
             stationarity_metrics = {
                 'stationarity.adf_test.statistic': stationarity_results['adf_test']['test_statistic'],
                 'stationarity.adf_test.pvalue': stationarity_results['adf_test']['pvalue'],
                 'stationarity.adf_test.is_stationary': stationarity_results['adf_test']['is_stationary'],
+                'stationarity.adf_test.critical_values': stationarity_results['adf_test']['critical_values'],
                 'stationarity.kpss_test.statistic': stationarity_results['kpss_test']['test_statistic'],
                 'stationarity.kpss_test.pvalue': stationarity_results['kpss_test']['pvalue'],
                 'stationarity.kpss_test.is_stationary': stationarity_results['kpss_test']['is_stationary'],
-                'stationarity.overall.is_stationary': stationarity_results['overall_assessment']['is_stationary']
-            }
-            self.tracker.log_metrics_safely(stationarity_metrics)
-            
-            # Log stationarity parameters
-            stationarity_params = {
-                'stationarity.adf_test.critical_values': stationarity_results['adf_test']['critical_values'],
                 'stationarity.kpss_test.critical_values': stationarity_results['kpss_test']['critical_values'],
+                'stationarity.overall.is_stationary': stationarity_results['overall_assessment']['is_stationary'],
                 'stationarity.overall.confidence': stationarity_results['overall_assessment']['confidence'],
                 'stationarity.overall.recommendation': stationarity_results['overall_assessment']['recommendation']
             }
-            self.tracker.log_params_safely(stationarity_params)
+            self.tracker.log_params_safely(stationarity_metrics)
             
             # Log artifacts
             mlflow.log_artifacts(analysis_path, "analysis")
@@ -430,10 +417,12 @@ class SARIMAPipeline:
         logger.info("Getting suggested model parameters")
         
         # Get suggested parameters from analyzer
-        suggested_params, stationarity_results = self.analyzer.get_suggested_parameters(
+        results = self.analyzer.suggest_model_parameters(
             data[self.config['data']['target_column']], 
             self.config
         )
+        suggested_params = results['suggested_parameters']
+        stationarity_results = results['analysis_results']
         
         # Adjust suggested parameters based on model type
         if self.model_type == 'arima':

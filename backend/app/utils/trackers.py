@@ -79,13 +79,10 @@ class PreprocessorTracker(MLflowTracker):
         prefixed_stats = self._prefix_dict_keys(stats, "preprocessing.features")
         self.log_params_safely(prefixed_stats)
     
-    def log_feature_engineering(self, added_features: List[str], lag_features: List[str], rolling_features: List[str]) -> None:
+    def log_feature_engineering(self, feature_type: str, added_features: List[str]) -> None:
         """Log feature engineering steps."""
         feature_info = {
-            "added_features": added_features,
-            "lag_features": lag_features,
-            "rolling_features": rolling_features,
-            "total_features": len(added_features) + len(lag_features) + len(rolling_features)
+            f"{feature_type}_features": added_features,
         }
         
         prefixed_info = self._prefix_dict_keys(feature_info, "preprocessing.features")
