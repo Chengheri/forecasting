@@ -26,45 +26,6 @@ logger = Logger()
 class TimeSeriesModel:
     """ARIMA/SARIMA time series model with unified tracking."""
     
-    # Default model configurations
-    DEFAULT_CONFIG = {
-        'model_type': 'sarima',
-        'p': 1,
-        'd': 1,
-        'q': 1,
-        'P': 0,
-        'D': 0,
-        'Q': 0,
-        's': 24,
-        'maxiter': 50,
-        'method': 'lbfgs',
-        'trend': None,
-        'enforce_stationarity': True,
-        'enforce_invertibility': True,
-        'concentrate_scale': False
-    }
-    
-    # Model type specific parameters
-    ARIMA_PARAMS = {'p', 'd', 'q', 'method', 'trend', 'enforce_stationarity', 'enforce_invertibility', 'concentrate_scale'}
-    SARIMA_PARAMS = ARIMA_PARAMS | {'P', 'D', 'Q', 's', 'maxiter'}
-    
-    # Optimization configurations
-    OPTUNA_PARAMS = {
-        'common': {
-            'trend': ['n', 'c', 't', 'ct'],
-            'enforce_stationarity': [True, False],
-            'enforce_invertibility': [True, False],
-            'concentrate_scale': [True, False]
-        },
-        'sarima': {
-            'method': ['lbfgs', 'bfgs', 'newton', 'cg', 'nm', 'powell'],
-            'maxiter': (50, 500)
-        },
-        'arima': {
-            'method': ['statespace', 'innovations_mle', 'hannan_rissanen']
-        }
-    }
-    
     def __init__(
         self,
         config: Optional[Dict[str, Any]] = None,
@@ -91,93 +52,87 @@ class TimeSeriesModel:
                    - concentrate_scale: bool = False
             tracker: MLflow tracker instance (optional)
             data: Input time series data (optional)
-            force_preparation: If True, always process the data. If False, use pd.Series as is.
         """
         logger.info("Initializing TimeSeriesModel")
         logger.debug(f"Configuration provided: {config}")
-        
-        # Initialize configuration with defaults
-        self.config = self.DEFAULT_CONFIG.copy()
-        if config:
-            logger.debug("Updating default configuration with provided values")
-            self.config.update(config)
-            logger.debug(f"Final configuration: {self.config}")
-        
+
+        self.config = config
         self.tracker = tracker
         self.model = None
         self.fitted_model = None
-        self._training_data = data  # Store the training data
-        
-        # Initialize analyzer
-        self.analyzer = Analyzer(config=self.config)
-        
-        self._log_initialization()
-        
+        self._training_data = None  
+
         # Initialize model with data if provided
         if data is not None:
-            logger.info("Initializing model with provided data")
-            ts = self.analyzer.format_input_data(data)
-            self.initialize_model(ts)
-            logger.info("Model initialization with data completed")
+            self.initialize_model(data, params=None)
+
+        self._log_initialization()
+
+        # Initialize analyzer
+        self.analyzer = Analyzer(config=self.config) 
     
     def _log_initialization(self) -> None:
         """Log initialization parameters."""
-        logger.info(f"Initialized {self.config['model_type'].upper()} model with parameters:")
-        logger.info(f"Order parameters: p={self.config['p']}, d={self.config['d']}, q={self.config['q']}")
-        if self.config['model_type'] == 'sarima':
-            logger.info(f"Seasonal parameters: P={self.config['P']}, D={self.config['D']}, Q={self.config['Q']}, s={self.config['s']}")
+        logger.info(f"Initialized {self.config['model']['model_type'].upper()} model with parameters:")
+        logger.info(f"Order parameters: p={self.config['model']['p']}, d={self.config['model']['d']}, q={self.config['model']['q']}")
+        if self.config['model']['model_type'] == 'sarima':
+            logger.info(f"Seasonal parameters: P={self.config['model']['P']}, D={self.config['model']['D']}, Q={self.config['model']['Q']}, s={self.config['model']['s']}")
         
         if self.tracker:
             logger.debug("Logging model parameters to tracker")
             self.tracker.log_params_safely({
-                'model.type': self.config['model_type']
+                'model.type': self.config['model']['model_type']
             })
-    
-    def _get_valid_params(self) -> set:
-        """Get valid parameters for current model type."""
-        return self.SARIMA_PARAMS if self.config['model_type'] == 'sarima' else self.ARIMA_PARAMS
     
     def _get_fit_params(self) -> Dict[str, Any]:
         """Get fit parameters based on model type."""
-        if self.config['model_type'] == 'sarima':
+        if self.config['model']['model_type'] == 'sarima':
             return {
-                'maxiter': self.config.get('maxiter', 50),
-                'method': self.config.get('method', 'lbfgs'),
+                'maxiter': self.config['model'].get('maxiter', 50),
+                'method': self.config['model'].get('method', 'lbfgs'),
                 'disp': False
             }
         return {
-            'method': self.config.get('method', 'statespace')
+            'method': self.config['model'].get('method', 'statespace')
         }
     
     def _create_model_instance(self, ts: pd.Series) -> Union[ARIMA, SARIMAX]:
         """Create ARIMA or SARIMA model instance based on configuration."""
-        if self.config['model_type'] == 'arima':
+        if self.config['model']['model_type'] == 'arima':
             return ARIMA(
                 ts,
-                order=(self.config['p'], self.config['d'], self.config['q']),
-                trend=self.config.get('trend'),
-                enforce_stationarity=self.config.get('enforce_stationarity', True),
-                enforce_invertibility=self.config.get('enforce_invertibility', True),
-                concentrate_scale=self.config.get('concentrate_scale', False),
+                order=(self.config['model']['p'], self.config['model']['d'], self.config['model']['q']),
+                trend=self.config['model'].get('trend'),
+                enforce_stationarity=self.config['model'].get('enforce_stationarity', True),
+                enforce_invertibility=self.config['model'].get('enforce_invertibility', True),
+                concentrate_scale=self.config['model'].get('concentrate_scale', False),
             )
         else:  # sarima
             return SARIMAX(
                 ts,
-                order=(self.config['p'], self.config['d'], self.config['q']),
-                seasonal_order=(self.config['P'], self.config['D'], self.config['Q'], self.config['s']),
-                trend=self.config.get('trend'),
-                enforce_stationarity=self.config.get('enforce_stationarity', True),
-                enforce_invertibility=self.config.get('enforce_invertibility', True),
-                concentrate_scale=self.config.get('concentrate_scale', False),
+                order=(self.config['model']['p'], self.config['model']['d'], self.config['model']['q']),
+                seasonal_order=(self.config['model']['P'], self.config['model']['D'], self.config['model']['Q'], self.config['model']['s']),
+                trend=self.config['model'].get('trend'),
+                enforce_stationarity=self.config['model'].get('enforce_stationarity', True),
+                enforce_invertibility=self.config['model'].get('enforce_invertibility', True),
+                concentrate_scale=self.config['model'].get('concentrate_scale', False),
             )
     
-    def initialize_model(self, ts: pd.Series) -> None:
-        """Initialize ARIMA or SARIMA model with configured parameters."""
-        logger.info("Initializing model with prepared data")
+    def initialize_model(self, data: Optional[Union[pd.DataFrame, pd.Series, np.ndarray]] = None, params: Optional[Dict[str, Any]] = None) -> None:
+        """Initialize the ARIMA model with data."""
+        if params:
+            self.config['model'].update(params)
+        
+        logger.info("Initializing model with provided data")
+        if data is not None:
+            self._training_data = data if isinstance(data, pd.Series) else pd.Series(data)
+        else:
+            if self._training_data is None:
+                raise ValueError("No data provided for training")
+        
         try:
-            self.model = self._create_model_instance(ts)
-            self._training_data = ts  # Update training data
-            logger.info(f"Model initialized successfully: {self.config['model_type'].upper()}")
+            self.model = self._create_model_instance(self._training_data)
+            logger.info(f"Model initialized successfully: {self.config['model']['model_type'].upper()}")
         except Exception as e:
             logger.error(f"Error initializing model: {str(e)}")
             raise
@@ -187,46 +142,30 @@ class TimeSeriesModel:
         """Get the stored training data."""
         return self._training_data
     
-    def fit(self, data: Optional[Union[pd.DataFrame, pd.Series, np.ndarray]] = None, force_preparation: bool = False) -> Dict[str, Any]:
-        """Train ARIMA or SARIMA model with tracking.
-        
-        Args:
-            data: Input time series data (optional if model was initialized with data)
-            force_preparation: If True, always process the data. If False, use pd.Series as is.
+    def fit(self, data: Union[pd.Series, pd.DataFrame, np.ndarray], params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        logger.info("Starting model training")
-        logger.debug(f"Input data provided: {data is not None}")
-        
+        Fit the ARIMA model to the provided data.
+        """
         try:
-            # Use existing model if initialized with data and no new data provided
-            if data is None and self.model is not None:
-                logger.info("Using model initialized during instantiation")
-            else:
-                if data is None:
-                    logger.error("No data provided for training")
-                    raise ValueError("Data must be provided either during initialization or fit")
-                logger.info("Preparing new data for training")
-                ts = self.analyzer.format_input_data(data, force_preparation=force_preparation)
-                logger.info("Initializing model with prepared data")
-                self.initialize_model(ts)
-            
-            # Prepare fit parameters based on model type
-            logger.info("Preparing fit parameters")
-            fit_params = self._get_fit_params()
+            # Convert input data to Series if needed
+            ts = data if isinstance(data, pd.Series) else pd.Series(data)
+            self._training_data = ts
             
             # Fit model with appropriate parameters
             logger.info("Fitting model")
+            self.initialize_model(ts, params=params)
+            fit_params = self._get_fit_params()
             self.fitted_model = self.model.fit(**fit_params)
             
             # Calculate metrics
-            logger.info("Calculating model metrics")
+            logger.info("Calculating model training metrics...")
             metrics = {
                 "aic": self.fitted_model.aic,
                 "bic": self.fitted_model.bic,
                 "hqic": self.fitted_model.hqic,
                 "llf": self.fitted_model.llf
             }
-            logger.debug(f"Model metrics: {metrics}")
+            logger.debug(f"Model training metrics: {metrics}")
             logger.info(f"Model training completed successfully")
             logger.info(f"Final metrics - AIC: {metrics['aic']:.2f}, BIC: {metrics['bic']:.2f}")
             return metrics
@@ -235,55 +174,47 @@ class TimeSeriesModel:
             logger.error(f"Error in model training: {str(e)}")
             raise
     
-    def predict(self, steps: int) -> Tuple[pd.Series, pd.DataFrame]:
-        """Generate forecasts and confidence intervals."""
-        logger.info(f"Generating predictions for {steps} steps")
+    def predict(self, data: Union[pd.Series, pd.DataFrame, np.ndarray], **kwargs) -> Tuple[pd.Series, Tuple[pd.Series, pd.Series]]:
+        """
+        Generate predictions for test data using the fitted ARIMA model.
+        
+        Args:
+            data: Test data to generate predictions for
+            **kwargs: Additional keyword arguments for prediction
+            
+        Returns:
+            Tuple containing:
+            - predictions: Predicted values as pd.Series
+            - confidence_intervals: Tuple of (lower_bound, upper_bound) as pd.Series
+            
+        Raises:
+            ValueError: If model is not trained or no test data provided
+        """
+        if data is None:
+            raise ValueError("Test data must be provided for prediction")
+            
+        # Convert input data to Series if needed
+        ts = data if isinstance(data, pd.Series) else pd.Series(data)
+        
+        logger.info(f"Generating predictions for {len(ts)} steps...")
         
         try:
             if self.fitted_model is None:
                 logger.error("Model not trained")
                 raise ValueError("Model must be trained before prediction")
             
-            logger.info("Calculating forecasts and confidence intervals")
-            forecast = self.fitted_model.get_forecast(steps=steps)
+            forecast = self.fitted_model.get_forecast(steps=len(ts))
+            logger.info("Calculating confidence intervals...")
             predictions = forecast.predicted_mean
             conf_int = forecast.conf_int()
             
             logger.debug(f"Predictions shape: {predictions.shape}")
             logger.debug(f"Confidence intervals shape: {conf_int.shape}")
-            
-            forecast_df = pd.DataFrame({
-                'prediction': predictions,
-                'lower': conf_int.iloc[:, 0],
-                'upper': conf_int.iloc[:, 1]
-            })
-            
             logger.info("Predictions generated successfully")
-            return predictions, forecast_df
+            return predictions, (conf_int.iloc[:, 0], conf_int.iloc[:, 1])
             
         except Exception as e:
             logger.error(f"Error generating predictions: {str(e)}")
-            raise
-    
-    def evaluate(self, y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
-        """Evaluate model performance."""
-        logger.info("Starting model evaluation")
-        logger.debug(f"True values shape: {y_true.shape}, Predicted values shape: {y_pred.shape}")
-        
-        try:
-            logger.info("Calculating performance metrics")
-            metrics = {
-                'rmse': np.sqrt(mean_squared_error(y_true, y_pred)),
-                'mae': mean_absolute_error(y_true, y_pred),
-                'mape': np.mean(np.abs((y_true - y_pred) / y_true)) * 100,
-                'r2': r2_score(y_true, y_pred)
-            }
-            
-            logger.debug(f"Calculated metrics: {metrics}")   
-            logger.info("Model evaluation completed successfully")
-            return metrics
-        except Exception as e:
-            logger.error(f"Error in model evaluation: {str(e)}")
             raise
     
     def save_model(self, path: str) -> None:
@@ -298,7 +229,7 @@ class TimeSeriesModel:
             logger.debug("Preparing model data for saving")
             model_data = {
                 'fitted_model': self.fitted_model,
-                'config': self.config
+                'config': self.config['model']
             }
             
             logger.info("Writing model to disk")
@@ -318,9 +249,9 @@ class TimeSeriesModel:
             
             logger.info("Updating model attributes")
             self.fitted_model = model_data['fitted_model']
-            self.config = model_data['config']
+            self.config['model'] = model_data['config']
             
-            logger.debug(f"Loaded model configuration: {self.config}")
+            logger.debug(f"Loaded model configuration: {self.config['model']}")
             logger.info("Model loaded successfully")
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")
@@ -362,7 +293,7 @@ class TimeSeriesModel:
         """Generate all parameter combinations for grid search."""
         combinations = []
         
-        if self.config['model_type'] == 'sarima':
+        if self.config['model']['model_type'] == 'sarima':
             # Get suggested parameters
             p = param_grid.get('p', [1])
             d = param_grid.get('d', [1])
@@ -413,9 +344,9 @@ class TimeSeriesModel:
         
         try:
             logger.debug("Updating configuration for evaluation")
-            temp_config = self.config.copy()
+            temp_config = self.config['model'].copy()
             # Ensure model_type is included in parameters
-            params['model_type'] = self.config['model_type']
+            params['model_type'] = self.config['model']['model_type']
             temp_config.update(params)
             
             logger.debug("Preparing data for evaluation")
@@ -497,31 +428,27 @@ class TimeSeriesModel:
                 os.remove(temp_path)
             return None
 
-    def grid_search(
-        self,
-        data: Optional[Union[pd.DataFrame, pd.Series, np.ndarray]] = None,
-        param_grid: Dict[str, List[Any]] = None,
-        max_iterations: Optional[int] = None,
-        early_stopping: bool = True,
-        early_stopping_patience: int = 5,
-        timeout: int = 60
-    ) -> Dict[str, Any]:
-        """Perform grid search for best parameters with tracking."""
-        logger.info("Starting grid search for best parameters")
+    def grid_search(self, data: Optional[Union[pd.Series, pd.DataFrame, np.ndarray]] = None,
+                   param_grid: Optional[Dict[str, List[int]]] = None,
+                   **kwargs) -> Dict[str, Any]:
+        """
+        Perform grid search to find optimal ARIMA parameters.
+        """
+        if data is not None:
+            ts = data if isinstance(data, pd.Series) else pd.Series(data)
+        else:
+            if self._training_data is None:
+                raise ValueError("No data provided and no training data available")
+            ts = self._training_data
+        
+        if param_grid is None:
+            param_grid = {}
+        
+        logger.info("Starting grid search for best parameters...")
         logger.debug(f"Parameter grid: {param_grid}")
-        logger.debug(f"Max iterations: {max_iterations}, Early stopping: {early_stopping}, Patience: {early_stopping_patience}")
+        logger.debug(f"Max iterations: {kwargs.get('max_iterations', None)}, Early stopping: {kwargs.get('early_stopping', True)}, Patience: {kwargs.get('early_stopping_patience', 5)}")
         
         try:
-            if data is None and self.model is not None:
-                ts = self.model.endog
-                logger.info("Using data from initialized model")
-            else:
-                if data is None:
-                    logger.error("No data provided for grid search")
-                    raise ValueError("Data must be provided either during initialization or grid search")
-                logger.info("Preparing new data for grid search")
-                ts = self.analyzer.format_input_data(data)
-            
             best_aic = float('inf')
             best_bic = float('inf')
             best_hqic = float('inf')
@@ -532,35 +459,35 @@ class TimeSeriesModel:
             
             # Ensure model_type is included in param_grid
             if 'model_type' not in param_grid:
-                param_grid['model_type'] = [self.config['model_type']]
+                param_grid['model_type'] = [self.config['model']['model_type']]
             
             total_combinations = np.prod([len(values) for values in param_grid.values()])
-            if max_iterations:
-                total_combinations = min(total_combinations, max_iterations)
+            if kwargs.get('max_iterations', None):
+                total_combinations = min(total_combinations, kwargs['max_iterations'])
             logger.info(f"Total parameter combinations to evaluate: {total_combinations}")
             
             logger.debug("Generating parameter combinations")
             param_combinations = self._generate_param_combinations(param_grid)
-            if max_iterations:
-                param_combinations = param_combinations[:max_iterations]
+            if kwargs.get('max_iterations', None):
+                param_combinations = param_combinations[:kwargs['max_iterations']]
             
             if self.tracker:
                 logger.debug("Logging grid search parameters to tracker")
                 self.tracker.log_params_safely({
                     "grid_search.param_grid": param_grid,
-                    "grid_search.max_iterations": max_iterations,
-                    "grid_search.early_stopping": early_stopping,
-                    "grid_search.patience": early_stopping_patience,
-                    "grid_search.timeout": timeout,
+                    "grid_search.max_iterations": kwargs.get('max_iterations', None),
+                    "grid_search.early_stopping": kwargs.get('early_stopping', True),
+                    "grid_search.patience": kwargs.get('early_stopping_patience', 5),
+                    "grid_search.timeout": kwargs.get('timeout', 60),
                 })
             
             for i, params in enumerate(param_combinations, 1):
                 logger.info(f"Testing combination {i}/{len(param_combinations)}: {params}")
                 
-                dynamic_timeout = timeout
+                dynamic_timeout = kwargs.get('timeout', 60)
                 if params.get('P', 0) > 0 or params.get('Q', 0) > 0:
                     logger.debug("Increasing timeout for seasonal model")
-                    dynamic_timeout = timeout * 2
+                    dynamic_timeout = dynamic_timeout * 2
                 if params.get('p', 1) > 2 or params.get('q', 1) > 2:
                     logger.debug("Increasing timeout for higher-order model")
                     dynamic_timeout = int(dynamic_timeout * 1.5)
@@ -586,7 +513,7 @@ class TimeSeriesModel:
                     no_improvement_count += 1
                     logger.debug(f"No improvement for {no_improvement_count} iterations")
                 
-                if early_stopping and no_improvement_count >= early_stopping_patience:
+                if kwargs.get('early_stopping', True) and no_improvement_count >= kwargs.get('early_stopping_patience', 5):
                     logger.info(f"Early stopping triggered after {i} iterations")
                     break
             
@@ -594,7 +521,6 @@ class TimeSeriesModel:
                 logger.error("No valid parameter combinations found")
                 raise ValueError("No valid parameter combinations found during grid search")
             
-            logger.info("Preparing grid search results")
             grid_search_results = {
                 'best_params': best_params,
                 'best_aic': best_aic,
@@ -617,7 +543,7 @@ class TimeSeriesModel:
                     "grid_search.convergence_rate": grid_search_results['convergence_rate']
                 })
             
-            logger.info("Grid search completed successfully")
+            logger.info(f"Grid search completed successfully. Best parameters: {best_params}")
             return grid_search_results
             
         except Exception as e:
@@ -659,13 +585,16 @@ class TimeSeriesModel:
         else:
             return str(obj)
 
-    def fit_with_optuna(self, n_trials=100, timeout=600):
+    def fit_with_optuna(self, data: Optional[Union[pd.Series, pd.DataFrame, np.ndarray]] = None, n_trials=100, timeout=600):
         """Optimize hyperparameters using Optuna and fit the model."""
         logger.info(f"Starting Optuna optimization with {n_trials} trials and {timeout}s timeout")
         
-        if self._training_data is None:
-            logger.error("No training data available")
-            raise ValueError("No training data available. Please provide data before optimization.")
+        if data is not None:
+            ts = data if isinstance(data, pd.Series) else pd.Series(data)
+        else:
+            if self._training_data is None:
+                raise ValueError("No data provided and no training data available")
+            ts = self._training_data
         
         def objective(trial):
             """Optimization objective function."""
@@ -680,7 +609,7 @@ class TimeSeriesModel:
             }
             
             # Add model-specific parameters
-            if self.config['model_type'] == 'sarima':
+            if self.config['model']['model_type'] == 'sarima':
                 params['method'] = trial.suggest_categorical('method', ['lbfgs', 'bfgs', 'newton', 'cg', 'nm', 'powell'])
                 params['maxiter'] = trial.suggest_int('maxiter', 50, 500)
             else:  # ARIMA
@@ -689,44 +618,44 @@ class TimeSeriesModel:
             logger.debug(f"Trial parameters: {params}")
             
             # Keep structural parameters unchanged
+            logger.info(f"Keep structural parameters unchanged")
             structural_params = {
-                'p': self.config['p'],
-                'd': self.config['d'],
-                'q': self.config['q']
+                'p': self.config['model']['p'],
+                'd': self.config['model']['d'],
+                'q': self.config['model']['q']
             }
             
-            if self.config['model_type'] == 'sarima':
+            if self.config['model']['model_type'] == 'sarima':
                 structural_params.update({
-                    'P': self.config['P'],
-                    'D': self.config['D'],
-                    'Q': self.config['Q'],
-                    's': self.config['s']
+                    'P': self.config['model']['P'],
+                    'D': self.config['model']['D'],
+                    'Q': self.config['model']['Q'],
+                    's': self.config['model']['s']
                 })
-            
             logger.debug(f"Structural parameters: {structural_params}")
             
             # Update configuration
             trial_config = self.config.copy()
-            trial_config.update(params)
-            trial_config.update(structural_params)
+            trial_config['model'].update(params)
+            trial_config['model'].update(structural_params)
             
             try:
                 # Create a temporary model for this trial
                 temp_model = TimeSeriesModel(
                     config=trial_config,
                     tracker=None,  # Don't track individual trials
-                    data=self._training_data,
+                    data=ts,
                 )
                 
                 logger.info(f"Fitting model for trial {trial.number}")
-                metrics = temp_model.fit()
+                metrics = temp_model.fit(data=ts)
                 logger.debug(f"Trial {trial.number} completed with AIC: {metrics['aic']}")
                 return metrics['aic']
             except Exception as e:
                 logger.warning(f"Trial {trial.number} failed: {str(e)}")
                 return float('inf')
         
-        logger.info("Creating and running Optuna study")
+        logger.info("Creating and running Optuna study...")
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=n_trials, timeout=timeout)
         
@@ -735,10 +664,10 @@ class TimeSeriesModel:
         logger.info(f"Best value (AIC): {study.best_value}")
         
         # Update model with best parameters
-        self.config.update(best_params)
+        self.config['model'].update(best_params)
         
-        logger.info("Fitting final model with best parameters")
-        final_metrics = self.fit()
+        logger.info("Fitting final model with best parameters...")
+        final_metrics = self.fit(data=ts, params=best_params)
         
         if self.tracker:
             logger.debug("Logging optimization results to tracker")

@@ -16,7 +16,7 @@
             "contamination": 0.1
         },
         "remove_anomalies": true,
-        "remove_non_stationarity": true,
+        "remove_non_stationarity": false,
         "add_time_features": true,
         "add_lag_features": true,
         "lag_features": [1, 2, 3, 24, 168],

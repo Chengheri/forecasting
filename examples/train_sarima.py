@@ -34,7 +34,7 @@ def main():
         
         # Initialize pipeline and process data
         pipeline = SARIMAPipeline(config=config, tracker=tracker)
-        train_data, test_data, suggested_params, stationarity_results = process_data(pipeline)
+        train_data, test_data, suggested_params, stationarity_results, stationarity_results_after_differencing = process_data(pipeline)
         
         # Train and evaluate model
         model_results = train_and_evaluate_model(pipeline, train_data, test_data, suggested_params, stationarity_results)
@@ -46,12 +46,9 @@ def main():
         model_path, analysis_path, model_file_path, analysis_results = model_artifacts
         
         # Track results and create summary
-        model_summary = track_and_summarize_results(pipeline, model_params, metrics, analysis_results, stationarity_results,
+        model_summary = track_and_summarize_results(pipeline, model_params, metrics, analysis_results, stationarity_results, stationarity_results_after_differencing,
                                   analysis_path, model_file_path, model_path, train_data, test_data,
                                   grid_search_results)
-        
-        # Log execution time and MLflow info
-        log_execution_info(tracker, run_timestamp)
         
     except Exception as e:
         logger.error(f"Error in main execution: {str(e)}")
@@ -78,8 +75,9 @@ def process_data(pipeline: SARIMAPipeline) -> Tuple[pd.DataFrame, pd.DataFrame, 
     data = pipeline.load_data()
     data = pipeline.prepare_data(data)
     suggested_params, stationarity_results = pipeline.get_model_parameters(data)
+    data, stationarity_results_after_differencing = pipeline.remove_non_stationarity(data)
     train_data, test_data = pipeline.split_data(data)
-    return train_data, test_data, suggested_params, stationarity_results
+    return train_data, test_data, suggested_params, stationarity_results, stationarity_results_after_differencing
 
 def train_and_evaluate_model(pipeline: SARIMAPipeline, 
                            train_data: pd.DataFrame,
@@ -114,7 +112,7 @@ def save_model_artifacts(pipeline: SARIMAPipeline,
     model_path, analysis_path, model_file_path = create_model_directories(pipeline.config['model']['model_type'], model_params)
     
     # Save model
-    save_model(model, model_file_path, model_params)
+    save_model(model, model_file_path)
     
     # Analyze results
     analysis_results = pipeline.analyze_results(
@@ -152,30 +150,21 @@ def create_model_directories(model_type: str, model_params: Dict[str, Any]) -> T
     
     return model_path, analysis_path, model_file_path
 
-def save_model(model: Union[TimeSeriesModel, SARIMAX], model_file_path: str, model_params: Dict[str, Any]) -> None:
+def save_model(model: Union[TimeSeriesModel, SARIMAX], model_file_path: str) -> None:
     """Save model to file.
     
     Args:
         model: Model instance to save
         model_file_path: Path to save the model
-        model_params: Model parameters
     """
-    if isinstance(model, TimeSeriesModel):
-        model.save_model(model_file_path)
-    else:
-        model_data = {
-            'fitted_model': model,
-            'config': model_params,
-            'model_type': 'sarima'
-        }
-        joblib.dump(model_data, model_file_path)
-    logger.info("Model saved successfully")
+    model.save_model(model_file_path)
 
 def track_and_summarize_results(pipeline: SARIMAPipeline,
                               model_params: Dict[str, Any],
                               metrics: Dict[str, Any],
                               analysis_results: Dict[str, Any],
                               stationarity_results: Dict[str, Any],
+                              stationarity_results_after_differencing: Dict[str, Any],
                               analysis_path: str,
                               model_file_path: str,
                               model_path: str,
@@ -189,6 +178,7 @@ def track_and_summarize_results(pipeline: SARIMAPipeline,
         metrics=metrics,
         analysis_results=analysis_results,
         stationarity_results=stationarity_results,
+        stationarity_results_after_differencing=stationarity_results_after_differencing,
         analysis_path=analysis_path,
         model_file_path=model_file_path
     )
@@ -213,13 +203,6 @@ def track_and_summarize_results(pipeline: SARIMAPipeline,
         json.dump(model_summary, f, indent=4)
     
     return model_summary
-
-def log_execution_info(tracker: ARIMATracker, run_timestamp: str) -> None:
-    """Log execution time and MLflow information."""
-    end_time = datetime.now()
-    execution_time = (datetime.strptime(run_timestamp, '%Y%m%d_%H%M%S') - end_time).total_seconds()
-    logger.info(f"Total training time: {execution_time:.2f} seconds")
-    log_mlflow_run_info(tracker, run_timestamp)
 
 def log_mlflow_run_info(tracker: ARIMATracker, run_timestamp: str) -> None:
     """Log MLflow run information.

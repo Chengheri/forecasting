@@ -73,8 +73,9 @@ class Analyzer:
 
     def _log_initialization(self) -> None:
         """Log initialization parameters."""
-        logger.info(f"Initialized Analyzer with config: {self.config}")
-        logger.info(f"Using save path: {self.save_path}")
+        logger.info("Initializing Analyzer")
+        logger.debug(f"Initialized Analyzer with config: {self.config}")
+        logger.info(f"Using save path for analysis: {self.save_path}")
         logger.debug(f"Default parameters - window: {self.default_window}, maxlags: {self.default_maxlags}, seasonal_period: {self.default_seasonal_period}")
 
     def _create_figure(self, figsize: Tuple[int, int] = None) -> Tuple[plt.Figure, plt.Axes]:
@@ -82,16 +83,20 @@ class Analyzer:
         figsize = figsize or self.PLOT_CONFIGS['figsize_large']
         return plt.subplots(figsize=figsize)
 
-    def _save_figure(self, fig: plt.Figure, filename: str) -> None:
+    def _save_figure(self, fig: plt.Figure, filename: str, save_path:str='') -> None:
         """Save figure to specified path."""
-        filepath = os.path.join(self.save_path, filename)
+        if not save_path:
+            save_path = self.save_path
+        filepath = os.path.join(save_path, filename)
         fig.savefig(filepath)
         plt.close(fig)
         logger.debug(f"Saved figure to {filepath}")
 
-    def _save_json(self, data: Dict[str, Any], filename: str) -> None:
+    def _save_json(self, data: Dict[str, Any], filename: str, save_path:str='') -> None:
         """Save dictionary as JSON file."""
-        filepath = os.path.join(self.save_path, filename)
+        if not save_path:
+            save_path = self.save_path
+        filepath = os.path.join(save_path, filename)
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=4)
         logger.debug(f"Saved JSON to {filepath}")
@@ -99,6 +104,7 @@ class Analyzer:
     def plot_actual_vs_predicted(self, actual: np.ndarray, predicted: np.ndarray, 
                                dates: np.ndarray, confidence_intervals: Optional[Tuple] = None) -> plt.Figure:
         """Plot actual vs predicted values with confidence intervals."""
+        logger.info("Plotting actual vs predicted values...")
         fig, ax = self._create_figure()
         
         style = self.PLOT_CONFIGS['style']
@@ -124,6 +130,7 @@ class Analyzer:
         maxlags = maxlags if maxlags is not None else self.default_maxlags
         residuals = actual - predicted
         
+        logger.info("Plotting residuals analysis...")
         fig = plt.figure(figsize=self.PLOT_CONFIGS['figsize_large'])
         gs = fig.add_gridspec(2, 3)
         
@@ -190,6 +197,7 @@ class Analyzer:
                 rolling_rmse.append(np.nan)
                 rolling_mae.append(np.nan)
         
+        logger.info("Plotting metrics over time...")
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=self.PLOT_CONFIGS['figsize_large'])
         
         ax1.plot(dates, rolling_rmse, label='Rolling RMSE')
@@ -216,6 +224,7 @@ class Analyzer:
         ts = pd.Series(data, index=dates)
         decomposition = seasonal_decompose(ts, period=period)
         
+        logger.info("Plotting seasonal decomposition...")
         fig, axes = plt.subplots(4, 1, figsize=(15, 12))
         
         axes[0].plot(dates, decomposition.observed)
@@ -246,16 +255,19 @@ class Analyzer:
         gs = fig.add_gridspec(3, 2)
         
         # Plot ACF
+        logger.info("Plotting ACF...")
         ax1 = fig.add_subplot(gs[0, 0])
         plot_acf(data, ax=ax1, lags=48)
         ax1.set_title('Autocorrelation Function (ACF)')
         
         # Plot PACF
+        logger.info("Plotting PACF...")
         ax2 = fig.add_subplot(gs[0, 1])
         plot_pacf(data, ax=ax2, lags=48)
         ax2.set_title('Partial Autocorrelation Function (PACF)')
         
         # Plot original time series
+        logger.info("Plotting original time series...")
         ax3 = fig.add_subplot(gs[1, :])
         ax3.plot(data.index, data.values)
         ax3.set_title('Original Time Series')
@@ -277,46 +289,60 @@ class Analyzer:
         ax4.text(0.1, 0.5, stationarity_text, fontsize=10, va='center')
         
         plt.tight_layout()
-        self._save_figure(fig, 'acf_pacf_analysis.png')
-        self._save_json(stationarity_results, 'stationarity_analysis.json')
+        self._save_figure(fig, 'acf_pacf_analysis.png', save_path=self.save_path)
+        self._save_json(stationarity_results, 'stationarity_analysis.json', save_path=self.save_path)
         
         logger.info(f"Saved comprehensive time series analysis to {self.save_path}")
         return stationarity_results
 
     def analyze_model_results(self, actual_values: np.ndarray, predicted_values: np.ndarray,
-                            timestamps: np.ndarray, confidence_intervals: Optional[Tuple] = None) -> Dict[str, float]:
+                            timestamps: np.ndarray, confidence_intervals: Optional[Tuple] = None, save_path:str='') -> Dict[str, float]:
         """Analyze and visualize model results."""
         # Generate and save plots
         fig_pred = self.plot_actual_vs_predicted(actual_values, predicted_values, timestamps, confidence_intervals)
-        self._save_figure(fig_pred, 'actual_vs_predicted.png')
+        self._save_figure(fig_pred, 'actual_vs_predicted.png', save_path=save_path)
         
         fig_resid = self.plot_residuals_analysis(actual_values, predicted_values, timestamps)
-        self._save_figure(fig_resid, 'residuals_analysis.png')
+        self._save_figure(fig_resid, 'residuals_analysis.png', save_path=save_path)
         
         fig_metrics = self.plot_metrics_over_time(actual_values, predicted_values, timestamps)
-        self._save_figure(fig_metrics, 'metrics_over_time.png')
+        self._save_figure(fig_metrics, 'metrics_over_time.png', save_path=save_path)
         
         fig_seasonal = self.plot_seasonal_decomposition(actual_values, timestamps)
-        self._save_figure(fig_seasonal, 'seasonal_decomposition.png')
+        self._save_figure(fig_seasonal, 'seasonal_decomposition.png', save_path=save_path)
         
-        # Calculate metrics
-        residuals = actual_values - predicted_values
-        metrics = {
-            'rmse': np.sqrt(np.mean(residuals**2)),
-            'mae': np.mean(np.abs(residuals)),
-            'mape': np.mean(np.abs(residuals / actual_values)) * 100,
-            'r2': 1 - np.sum(residuals**2) / np.sum((actual_values - np.mean(actual_values))**2),
-            'directional_accuracy': np.mean(np.sign(np.diff(actual_values)) == np.sign(np.diff(predicted_values))) * 100,
-            'residuals_mean': np.mean(residuals),
-            'residuals_std': np.std(residuals),
-            'residuals_skewness': stats.skew(residuals),
-            'residuals_kurtosis': stats.kurtosis(residuals),
-            'residuals_normal': stats.normaltest(residuals)[1] > 0.05,
-            'residuals_autocorrelation': acf(residuals)[1] if len(residuals) > 1 else 0,
-            'residuals_independent': np.abs(acf(residuals)[1]) < 1.96/np.sqrt(len(residuals)) if len(residuals) > 1 else True
-        }
-        
+        metrics = self.evaluate(actual_values, predicted_values)
         return metrics
+
+    def evaluate(self, y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+        """Evaluate model performance."""
+        logger.info("Starting model evaluation")
+        logger.debug(f"True values shape: {y_true.shape}, Predicted values shape: {y_pred.shape}")
+        
+        try:
+            logger.info("Calculating performance metrics...")
+            # Calculate metrics
+            residuals = y_true - y_pred
+            metrics = {
+                'rmse': np.sqrt(np.mean(residuals**2)),
+                'mae': np.mean(np.abs(residuals)),
+                'mape': np.mean(np.abs(residuals / y_true)) * 100,
+                'r2': 1 - np.sum(residuals**2) / np.sum((y_true - np.mean(y_true))**2),
+                'directional_accuracy': np.mean(np.sign(np.diff(y_true)) == np.sign(np.diff(y_pred))) * 100,
+                'residuals_mean': np.mean(residuals),
+                'residuals_std': np.std(residuals),
+                'residuals_skewness': stats.skew(residuals),
+                'residuals_kurtosis': stats.kurtosis(residuals),
+                'residuals_normal': stats.normaltest(residuals)[1] > 0.05,
+                'residuals_autocorrelation': acf(residuals)[1] if len(residuals) > 1 else 0,
+                'residuals_independent': np.abs(acf(residuals)[1]) < 1.96/np.sqrt(len(residuals)) if len(residuals) > 1 else True
+            }
+            logger.debug(f"Calculated metrics: {metrics}")   
+            logger.info("Model evaluation completed successfully")
+            return metrics
+        except Exception as e:
+            logger.error(f"Error in model evaluation: {str(e)}")
+            raise
 
     def _perform_stationarity_tests(self, data: Union[np.ndarray, pd.Series]) -> Dict[str, Any]:
         """Perform ADF and KPSS tests on the data."""
@@ -456,38 +482,77 @@ class Analyzer:
                 return 12  # Monthly data
         return 1  # No seasonality
 
-    def format_input_data(self, data: Union[pd.DataFrame, pd.Series, np.ndarray]) -> pd.Series:
-        """Format input data into a pandas Series."""
-        logger.info("Starting data formatting")
+    def remove_non_stationarity(self, data: Union[pd.DataFrame, pd.Series, np.ndarray]) -> Tuple[pd.Series, Dict[str, Any]]:
+        """Format input data into a pandas Series and handle non-stationarity if needed.
+        
+        Args:
+            data: Input data in various formats (DataFrame, Series, or numpy array)
+            
+        Returns:
+            Tuple containing:
+                - Formatted and (optionally) differenced time series
+                - Dictionary with stationarity results and differencing parameters
+        """
+        logger.info("Starting data formatting and stationarity analysis")
         logger.debug(f"Input data type: {type(data)}")
         
         try:
+            # Convert input to pandas Series
             ts = self._convert_to_series(data)
             
-            if self.config.get('remove_non_stationarity', True):
-                logger.info("Removing non-stationarity from data")
-                seasonal = self.config.get('model_type', '') == 'sarima'
-                seasonal_period = self.config.get('s', None) if seasonal else None
-                
-                logger.debug(f"Seasonal differencing enabled: {seasonal}")
-                logger.debug(f"Seasonal period: {seasonal_period}")
-                
-                ts, diff_params = self.remove_non_stationarity(
-                    ts,
-                    max_diff=self.config.get('max_diff', 2),
-                    seasonal_diff=seasonal,
-                    seasonal_period=seasonal_period
-                )
-                
-                logger.info(f"Non-stationarity removal completed. Differencing parameters: d={diff_params['d']}, D={diff_params['D']}")
-            else:
-                logger.info("Skipping non-stationarity removal")
+            # Initialize parameters
+            params = {'d': 0, 'D': 0}
+            seasonal = self.config.get('model_type', '') == 'sarima'
+            seasonal_period = self.config.get('s', None) if seasonal else None
+            max_diff = self.config.get('max_diff', 2)
             
-            logger.info("Data formatting completed successfully")
-            return ts
+            # Check initial stationarity
+            logger.info("Starting stationarity analysis before differencing...")
+            stationarity_check = self.check_stationarity(ts)
+            
+            if not stationarity_check['is_stationary']:
+                logger.info("Data is non-stationary. Applying differencing...")
+                
+                # Handle seasonal differencing first if applicable
+                if seasonal and (seasonal_period or self._infer_seasonal_period(ts)) > 1:
+                    seasonal_period = seasonal_period or self._infer_seasonal_period(ts)
+                    logger.debug(f"Applying seasonal differencing with period {seasonal_period}")
+                    
+                    seasonal_diff = ts.diff(seasonal_period).dropna()
+                    seasonal_check = self.check_stationarity(seasonal_diff)
+                    
+                    if seasonal_check['is_stationary']:
+                        ts = seasonal_diff
+                        params['D'] = 1
+                        logger.info("Seasonal differencing improved stationarity")
+                    else:
+                        logger.info("Seasonal differencing did not improve stationarity")
+                
+                # Apply regular differencing if still needed
+                for d in range(max_diff + 1):
+                    current_check = self.check_stationarity(ts)
+                    if current_check['is_stationary']:
+                        stationarity_check = current_check
+                        break
+                    
+                    if d < max_diff:
+                        ts = ts.diff().dropna()
+                        params['d'] = d + 1
+                        logger.info(f"Applied regular differencing (order {d + 1})")
+            
+            results = {
+                'stationarity_check': stationarity_check,
+                'differencing_params': params,
+                'seasonal_period': seasonal_period if seasonal else None
+            }
+            
+            logger.info("Data formatting and stationarity analysis completed")
+            logger.debug(f"Final differencing parameters: d={params['d']}, D={params['D']}")
+            
+            return ts, results
                 
         except Exception as e:
-            logger.error(f"Error in format_input_data: {str(e)}")
+            logger.error(f"Error in remove_non_stationarity: {str(e)}")
             raise
 
     def _convert_to_series(self, data: Union[pd.DataFrame, pd.Series, np.ndarray]) -> pd.Series:
@@ -516,41 +581,6 @@ class Analyzer:
             logger.error(f"Unsupported data type: {type(data)}")
             raise ValueError("Data must be pandas DataFrame, Series, or numpy array")
 
-    def remove_non_stationarity(self, data: pd.Series, max_diff: int = 2, 
-                              seasonal_diff: bool = True, 
-                              seasonal_period: Optional[int] = None) -> Tuple[pd.Series, Dict[str, int]]:
-        """Remove non-stationarity through differencing."""
-        result = data.copy()
-        params = {'d': 0, 'D': 0}
-        
-        try:
-            if seasonal_diff and seasonal_period is None:
-                seasonal_period = self._infer_seasonal_period(data)
-            
-            if seasonal_diff and seasonal_period > 1:
-                seasonal_diff_data = result.diff(seasonal_period).dropna()
-                stationarity_check = self.check_stationarity(seasonal_diff_data)
-                if stationarity_check['is_stationary']:
-                    result = seasonal_diff_data
-                    params['D'] = 1
-                    logger.info(f"Applied seasonal differencing with period {seasonal_period}")
-            
-            for d in range(max_diff + 1):
-                stationarity_check = self.check_stationarity(result)
-                if stationarity_check['is_stationary']:
-                    break
-                
-                if d < max_diff:
-                    result = result.diff().dropna()
-                    params['d'] = d + 1
-                    logger.info(f"Applied regular differencing (order {d + 1})")
-            
-            return result, params
-            
-        except Exception as e:
-            logger.error(f"Error in remove_non_stationarity: {str(e)}")
-            raise
-
     def suggest_model_parameters(self, data: pd.Series, config: dict) -> Dict[str, Any]:
         """Get suggested model parameters based on time series analysis."""
         logger.info("Starting parameter suggestion analysis")
@@ -559,19 +589,27 @@ class Analyzer:
             analysis_dir = os.path.join(self.save_path, "stationarity_analysis")
             os.makedirs(analysis_dir, exist_ok=True)
             
-            analysis_results = self.analyze_time_series(data)
-            acf_values, pacf_values = self._calculate_acf_pacf(data)
+            # Format data and check stationarity
+            formatted_data, format_results = self.remove_non_stationarity(data)
+            stationarity_results = format_results['stationarity_check']
             
-            seasonal_period = self._infer_seasonal_period(data)
+            # Calculate ACF and PACF on the formatted (and possibly differenced) data
+            acf_values, pacf_values = self._calculate_acf_pacf(formatted_data)
+            
+            # Get seasonal period
+            seasonal_period = format_results['seasonal_period'] or self._infer_seasonal_period(data)
+            
+            # Suggest parameters based on ACF/PACF analysis
             params = self._suggest_order_parameters(acf_values, pacf_values, seasonal_period)
             
-            params['d'] = 0 if analysis_results['overall_assessment']['is_stationary'] else 1
-            params['D'] = 1 if 'seasonal' in analysis_results['overall_assessment']['recommendation'].lower() else 0
+            # Use the differencing parameters from format_results
+            params['d'] = format_results['differencing_params']['d']
+            params['D'] = format_results['differencing_params']['D']
             params['s'] = seasonal_period
             
             results = {
                 'suggested_parameters': params,
-                'analysis_results': analysis_results,
+                'analysis_results': stationarity_results,
                 'acf_values': acf_values,
                 'pacf_values': pacf_values
             }

@@ -435,6 +435,7 @@ class DataPreprocessor:
                 
                 return X_seq, y_seq
             
+            logger.info("Data preparation completed successfully")
             return df
             
         except Exception as e:

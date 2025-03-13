@@ -40,18 +40,59 @@ def filter_model_params(params: Dict[str, Any], model_type: str) -> Dict[str, An
     return {k: v for k, v in params.items() if k in valid_model_params}
 
 def convert_to_native_types(obj: Any) -> Any:
-    """Convert numpy types to native Python types."""
-    if isinstance(obj, (np.int_, np.intc, np.intp, np.int8, np.int16, np.int32,
-                       np.int64, np.uint8, np.uint16, np.uint32, np.uint64)):
+    """Convert numpy and pandas types to native Python types for JSON serialization.
+    
+    Args:
+        obj: Object to convert
+        
+    Returns:
+        Converted object with native Python types
+    """
+    # Handle None
+    if obj is None:
+        return None
+        
+    # Handle numpy integer types
+    if isinstance(obj, (int, np.integer)):
         return int(obj)
-    elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+        
+    # Handle numpy float types
+    elif isinstance(obj, (float, np.floating)):
         return float(obj)
-    elif isinstance(obj, (np.bool_, bool)):
+        
+    # Handle numpy bool types
+    elif isinstance(obj, (bool, np.bool_)):
         return bool(obj)
+        
+    # Handle numpy arrays
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+        
+    # Handle pandas Series
+    elif isinstance(obj, pd.Series):
+        return obj.to_list()
+        
+    # Handle pandas DataFrame
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict(orient='records')
+        
+    # Handle pandas Index
+    elif isinstance(obj, pd.Index):
+        return obj.to_list()
+        
+    # Handle dictionaries
     elif isinstance(obj, dict):
         return {str(key): convert_to_native_types(value) for key, value in obj.items()}
+        
+    # Handle lists and tuples
     elif isinstance(obj, (list, tuple)):
         return [convert_to_native_types(item) for item in obj]
+        
+    # Handle datetime objects
+    elif isinstance(obj, (datetime, pd.Timestamp)):
+        return obj.isoformat()
+        
+    # Return other types as is
     return obj
 
 class SARIMAPipeline:
@@ -67,8 +108,6 @@ class SARIMAPipeline:
         self.config = config
         self.tracker = tracker
         self.model_type = config['model'].get('model_type', 'sarima').lower()
-        self.use_grid_search = config['model'].get('use_grid_search', False)
-        self.optimize_hyperparameters = config['model'].get('optimize_hyperparameters', False)
         self.analyzer = Analyzer(config=config)
         self.preprocessor = DataPreprocessor(config=config['preprocessing'], tracker=tracker)
     
@@ -82,9 +121,7 @@ class SARIMAPipeline:
         logger.info("Initializing DataLoader")
         data_loader = DataLoader(config=self.config)
         
-        logger.info(f"Loading data from {self.config['data']['path']}")
         data = data_loader.load_csv()
-        logger.info(f"Successfully loaded data with shape: {data.shape}")
         return data
     
     @handle_pipeline_errors
@@ -97,13 +134,56 @@ class SARIMAPipeline:
         Returns:
             pd.DataFrame: Prepared data
         """
-        logger.info("Starting data preparation")
         prepared_data = self.preprocessor.preprocess_data(
             data, 
             target_column=self.config['data']['target_column']
         )
-        logger.info("Data preparation completed successfully")
         return prepared_data
+    
+    @handle_pipeline_errors
+    def remove_non_stationarity(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Remove non-stationarity from time series data based on configuration.
+        
+        Args:
+            data: Input time series data
+            
+        Returns:
+            Tuple containing:
+            - Processed time series data as pd.DataFrame
+            - Dictionary with stationarity analysis results and differencing parameters
+            
+        The method uses the pipeline's configuration to determine:
+        - Whether to apply seasonal differencing (based on model_type)
+        - The seasonal period to use (from config['model']['s'])
+        - Maximum differencing order (from config or default)
+        """
+        logger.info("Removing non-stationarity from time series data")
+        
+        try:
+            # Create a copy of the input DataFrame
+            processed_data = data.copy()
+            
+            # Extract target series
+            target_col = self.config['data']['target_column']
+            ts = data[target_col]
+
+            if self.config['preprocessing'].get('remove_non_stationarity', False): 
+                # Use analyzer to handle non-stationarity
+                processed_ts, _ = self.analyzer.remove_non_stationarity(ts)
+                logger.info(f"Starting stationarity analysis after differencing...")
+                results = self.analyzer.check_stationarity(processed_ts)
+                # Update the target column with processed values
+                processed_data[target_col] = processed_ts
+                logger.info("Non-stationarity removal completed")
+            else:
+                logger.info("Non-stationarity removal not enabled")             
+                results = {}
+                
+            return processed_data, results
+            
+        except Exception as e:
+            logger.error(f"Error removing non-stationarity: {str(e)}")
+            raise
     
     def split_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Split data into training and test sets.
@@ -122,13 +202,20 @@ class SARIMAPipeline:
                    f"gap={self.config['preprocessing'].get('gap', 0)}")
         
         try:
+            # Convert data to DataFrame if it's a Series
+            if isinstance(data, pd.Series):
+                data = data.to_frame()
+            
+            # Get date column name, ensuring it's a string or None
+            date_column = str(data.index.name) if data.index.name else None
+            
             # Split data using preprocessor's method
             train_data, test_data = self.preprocessor.train_test_split_timeseries(
                 data,
                 train_ratio=self.config['preprocessing']['train_ratio'],
                 validation_ratio=self.config['preprocessing'].get('validation_ratio', 0.0),
                 target_column=self.config['data']['target_column'],
-                date_column=data.index.name,
+                date_column=date_column,
                 gap=self.config['preprocessing'].get('gap', 0)
             )
             
@@ -157,63 +244,63 @@ class SARIMAPipeline:
     @handle_pipeline_errors
     def train_model(self, train_data: pd.DataFrame, test_data: pd.DataFrame,
                    suggested_params: Dict[str, Any], stationarity_results: Dict[str, Any],
-                   preprocessor: DataPreprocessor) -> Tuple[TimeSeriesModel, Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-        """Train the ARIMA/SARIMA model with the specified configuration."""
-        # Initialize model with data
-        filtered_config = filter_model_params(self.config['model'], self.model_type)
-        filtered_config['model_type'] = self.model_type
+                   preprocessor: DataPreprocessor) -> Tuple[TimeSeriesModel, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Train the ARIMA model.
         
+        Args:
+            train_data: Training dataset
+            test_data: Test dataset
+            suggested_params: Model parameters suggested by analyzer
+            stationarity_results: Results from stationarity analysis
+            preprocessor: Data preprocessor instance
+            
+        Returns:
+            Tuple containing:
+                - Trained model instance
+                - Model parameters used
+                - Training metrics
+                - Grid search results (if performed)
+        """        
+        # Extract training data as Series
+        train_series = train_data[self.config['data']['target_column']]
+        if isinstance(train_series, pd.DataFrame):
+            train_series = train_series.squeeze()
+        
+        # Initialize model
+        self.config['model'].update(suggested_params)
         model = TimeSeriesModel(
-            config=filtered_config,
+            config=self.config,
             tracker=self.tracker,
-            data=train_data[self.config['data']['target_column']].values.ravel()
+            data=train_series
         )
         
-        if self.use_grid_search:
-            # Train with grid search
-            logger.info("Starting grid search")
+        if self.config['model'].get('use_grid_search'):
+            # Perform grid search
             grid_search_results = model.grid_search(
-                data=train_data[self.config['data']['target_column']].values.ravel(),
+                data=train_series,
                 param_grid=self.config['grid_search']['param_grid'],
                 max_iterations=self.config['grid_search'].get('max_iterations', 50),
                 early_stopping=self.config['grid_search'].get('early_stopping', True),
-                early_stopping_patience=self.config['grid_search'].get('early_stopping_patience', 5),
-                timeout=self.config['grid_search'].get('timeout', 60)
+                cv=self.config['grid_search'].get('cv', 3)
             )
-            
-            model = model.get_best_model()
+            model.fitted_model = grid_search_results['best_model']
             model_params = grid_search_results['best_params']
-            metrics = {
-                'aic': grid_search_results['best_aic'],
-                'bic': grid_search_results['best_bic'],
-                'hqic': grid_search_results['best_hqic']
-            }
-            
-            logger.info(f"Grid search completed. Best parameters: {model_params}")
-            logger.info(f"Best AIC: {metrics['aic']}")
-            
-        else:
-            # Train with suggested parameters
-            logger.info(f"Training {self.model_type.upper()} model with suggested parameters: {suggested_params}")
-            
-            # Update model configuration with suggested parameters
-            filtered_suggested = filter_model_params(suggested_params, self.model_type)
-            model.config.update(filtered_suggested)
-            
-            # Train model
-            logger.info("Starting model training")
-            metrics = model.fit()
+            metrics = grid_search_results['best_metrics']
+        elif self.config['model'].get('optimize_hyperparameters'):
+            # Perform hyperparameter optimization
+            metrics = model.fit_with_optuna(
+                data=train_series,
+                n_trials=self.config['model']['optimization']['n_trials'],
+                timeout=self.config['model']['optimization']['timeout']
+            )
             model_params = suggested_params
             grid_search_results = None
-        
-        # Optimize non-structural hyperparameters if enabled
-        if self.optimize_hyperparameters:
-            logger.info("Starting hyperparameter optimization with Optuna")
-            metrics = model.fit_with_optuna(
-                n_trials=self.config['model']['optimization'].get('n_trials', 100),
-                timeout=self.config['model']['optimization'].get('timeout', 600)
-            )
-            logger.info(f"Hyperparameter optimization completed. Best parameters: {model.config}")
+        else:
+            # Train model with suggested parameters
+            logger.info("Starting model training with suggested parameters...")
+            metrics = model.fit(data=train_series)
+            model_params = suggested_params
+            grid_search_results = None
         
         return model, model_params, metrics, grid_search_results
     
@@ -223,38 +310,37 @@ class SARIMAPipeline:
         
         Args:
             model: Trained model instance
-            test_data: Test dataset
+            test_data: Test dataset to generate predictions for
             
         Returns:
-            Tuple containing predictions and confidence intervals
+            Tuple containing:
+                - Mean forecast as numpy array
+                - Optional tuple of confidence intervals (lower, upper) as numpy arrays
         """
         logger.info(f"Generating predictions for test data with {len(test_data)} steps")
         
-        if isinstance(model, TimeSeriesModel):
-            mean_forecast, confidence_intervals = model.predict(len(test_data))
-            if isinstance(confidence_intervals, tuple) and len(confidence_intervals) == 2:
-                lower_ci, upper_ci = confidence_intervals
-            else:
-                logger.warning("Unexpected confidence intervals format from TimeSeriesModel. Using None.")
-                confidence_intervals = None
-        else:
-            forecast = model.get_forecast(steps=len(test_data))
-            mean_forecast = forecast.predicted_mean
-            conf_int = forecast.conf_int()
-            try:
-                lower_ci = conf_int.iloc[:, 0].values
-                upper_ci = conf_int.iloc[:, 1].values
-                confidence_intervals = (lower_ci, upper_ci)
-                logger.info(f"Confidence intervals shape: lower {lower_ci.shape}, upper {upper_ci.shape}")
-            except Exception as e:
-                logger.warning(f"Failed to process confidence intervals: {str(e)}. Using None.")
-                confidence_intervals = None
+        # Extract test data as Series if needed
+        test_series = test_data[self.config['data']['target_column']]
+        if isinstance(test_series, pd.DataFrame):
+            test_series = test_series.squeeze()
+            
+        # Generate predictions
+        mean_forecast, confidence_intervals = model.predict(test_series)
+        
+        # Convert predictions to numpy arrays if they aren't already
+        mean_forecast = mean_forecast.to_numpy() if isinstance(mean_forecast, (pd.Series, pd.DataFrame)) else mean_forecast
+        
+        if confidence_intervals is not None:
+            lower = confidence_intervals[0].to_numpy() if isinstance(confidence_intervals[0], (pd.Series, pd.DataFrame)) else confidence_intervals[0]
+            upper = confidence_intervals[1].to_numpy() if isinstance(confidence_intervals[1], (pd.Series, pd.DataFrame)) else confidence_intervals[1]
+            confidence_intervals = (lower, upper)
         
         return mean_forecast, confidence_intervals
     
     @handle_pipeline_errors
     def track_results(self, model_params: Dict[str, Any], metrics: Dict[str, Any], 
                      analysis_results: Dict[str, Any], stationarity_results: Dict[str, Any],
+                     stationarity_results_after_differencing: Dict[str, Any],
                      analysis_path: str, model_file_path: str) -> None:
         """Track model results using MLflow."""
         try:
@@ -316,6 +402,20 @@ class SARIMAPipeline:
             }
             self.tracker.log_params_safely(stationarity_metrics)
             
+            if stationarity_results_after_differencing:
+                # Log stationarity results after differencing
+                stationarity_metrics_after_differencing = {
+                    'stationarity.after_differencing.adf_test.statistic': stationarity_results_after_differencing['adf_test']['test_statistic'],
+                    'stationarity.after_differencing.adf_test.pvalue': stationarity_results_after_differencing['adf_test']['pvalue'],
+                    'stationarity.after_differencing.adf_test.is_stationary': stationarity_results_after_differencing['adf_test']['is_stationary'],
+                    'stationarity.after_differencing.kpss_test.statistic': stationarity_results_after_differencing['kpss_test']['test_statistic'],
+                    'stationarity.after_differencing.kpss_test.pvalue': stationarity_results_after_differencing['kpss_test']['pvalue'],
+                    'stationarity.after_differencing.kpss_test.is_stationary': stationarity_results_after_differencing['kpss_test']['is_stationary'],
+                    'stationarity.after_differencing.overall.is_stationary': stationarity_results_after_differencing['overall_assessment']['is_stationary'],
+                    'stationarity.after_differencing.overall.confidence': stationarity_results_after_differencing['overall_assessment']['confidence'],
+                    'stationarity.after_differencing.overall.recommendation': stationarity_results_after_differencing['overall_assessment']['recommendation']
+                }
+                self.tracker.log_params_safely(stationarity_metrics_after_differencing)
             # Log artifacts
             mlflow.log_artifacts(analysis_path, "analysis")
             mlflow.log_artifact(model_file_path, "model")
@@ -329,14 +429,31 @@ class SARIMAPipeline:
                            analysis_results: Dict[str, Any], stationarity_results: Dict[str, Any],
                            model_path: str, analysis_path: str, grid_search_results: Optional[Dict] = None,
                            preprocessor: Optional[DataPreprocessor] = None) -> Dict[str, Any]:
-        """Create a comprehensive model summary with consistent structure."""
+        """Create a comprehensive model summary with consistent structure.
+        
+        Args:
+            train_data: Training dataset
+            test_data: Test dataset
+            model_params: Model parameters used
+            metrics: Training metrics
+            analysis_results: Results from model analysis
+            stationarity_results: Results from stationarity analysis
+            model_path: Path where model is saved
+            analysis_path: Path where analysis results are saved
+            grid_search_results: Optional grid search results
+            preprocessor: Optional data preprocessor instance
+            
+        Returns:
+            Dict[str, Any]: Model summary with all values converted to JSON-serializable types
+        """
+        # Convert all numeric values to native Python types
         model_summary = {
             'initial_configuration': convert_to_native_types(self.config),
             'training_details': {
                 'train_samples': int(len(train_data)),
                 'test_samples': int(len(test_data)),
-                'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'parameter_selection_method': 'grid_search' if self.use_grid_search else 'suggested_parameters'
+                'training_date': datetime.now().isoformat(),
+                'parameter_selection_method': 'grid_search' if self.config['model'].get('use_grid_search') else 'suggested_parameters'
             },
             'best_model': {
                 'parameters': convert_to_native_types(model_params),
@@ -356,8 +473,8 @@ class SARIMAPipeline:
                     }
                 },
                 'artifacts': {
-                    'model_path': model_path,
-                    'analysis_path': analysis_path,
+                    'model_path': str(model_path),
+                    'analysis_path': str(analysis_path),
                     'plots': [
                         'actual_vs_predicted.png',
                         'residuals_analysis.png',
@@ -389,33 +506,47 @@ class SARIMAPipeline:
     def analyze_results(self, test_data: pd.DataFrame, mean_forecast: np.ndarray, 
                       confidence_intervals: Optional[Tuple[np.ndarray, np.ndarray]], 
                       analysis_path: str) -> Dict[str, Any]:
-        """Analyze model results using the Analyzer."""
+        """Analyze model results using the Analyzer.
+        
+        Args:
+            test_data: Test dataset
+            mean_forecast: Mean forecast values
+            confidence_intervals: Optional tuple of lower and upper confidence bounds
+            analysis_path: Path to save analysis results
+            
+        Returns:
+            Dict[str, Any]: Analysis results
+        """
         logger.info("Analyzing model results")
         
-        # Initialize analyzer with analysis path
-        analyzer = Analyzer(config=self.config, save_path=analysis_path)
+        # Get target values from test data and ensure numpy array format
+        target_values = test_data[self.config['data']['target_column']]
+        if isinstance(target_values, pd.Series):
+            target_values = target_values.to_numpy()
         
-        # Get target values from test data
-        target_values = test_data[self.config['data']['target_column']].values if isinstance(
-            test_data[self.config['data']['target_column']], pd.Series
-        ) else test_data[self.config['data']['target_column']]
+        # Convert timestamps to numpy array if needed
+        timestamps = test_data.index
+        if isinstance(timestamps, pd.Index):
+            timestamps = timestamps.to_numpy()
         
         # Analyze results
-        analysis_results = analyzer.analyze_model_results(
+        analysis_results = self.analyzer.analyze_model_results(
             target_values,
             mean_forecast,
-            test_data.index,
-            confidence_intervals
+            timestamps,
+            confidence_intervals,
+            analysis_path
         )
+        
+        # Convert results to native types for JSON serialization
+        analysis_results = convert_to_native_types(analysis_results)
         
         logger.info("Model results analysis completed successfully")
         return analysis_results
     
     @handle_pipeline_errors
     def get_model_parameters(self, data: pd.DataFrame) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Get suggested model parameters and adjust them based on model type."""
-        logger.info("Getting suggested model parameters")
-        
+        """Get suggested model parameters and adjust them based on model type."""        
         # Get suggested parameters from analyzer
         results = self.analyzer.suggest_model_parameters(
             data[self.config['data']['target_column']], 

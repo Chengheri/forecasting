@@ -10,7 +10,7 @@ logger = Logger()
 
 class DataLoader:
     def __init__(self, config: Dict[str, Any]):
-        logger.info(f"Initializing DataLoader with config: {config}")
+        logger.debug(f"Initializing DataLoader with config: {config}")
         self.config = config
 
     def load_csv(self, file_path: str = "", date_column: str = None,
@@ -48,7 +48,7 @@ class DataLoader:
             data = data.sort_values(actual_date_column)
             data.set_index(actual_date_column, inplace=True)
             
-            logger.info(f"Successfully loaded {len(data)} rows of data")
+            logger.info(f"Successfully loaded data with shape: {data.shape}")
             logger.debug(f"DataFrame columns: {list(data.columns)}")
             
             return data

@@ -46,11 +46,11 @@ def test_data_preparation(sample_data):
     """Test data preparation functionality."""
     logger.info("Testing data preparation")
     model = TimeSeriesModel({'model_type': 'arima'})
-    ts = model.analyzer.format_input_data(sample_data)
-    
+    ts, results = model.analyzer.remove_non_stationarity(sample_data)
     assert isinstance(ts, pd.Series)
-    assert ts.index.name == 'timestamp'
-    assert not ts.isnull().any()
+    assert isinstance(results, dict)
+    assert 'stationarity_check' in results
+    assert 'differencing_params' in results
     logger.info("Data preparation test passed")
 
 def test_arima_training(sample_data):
