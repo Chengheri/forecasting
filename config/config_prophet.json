@@ -1,0 +1,92 @@
+{
+    "data": {
+        "path": "data/examples/consumption_data_france.csv",
+        "index_column": "date",
+        "target_column": "value"
+    },
+    "preprocessing": {
+        "train_ratio": 0.8,
+        "validation_ratio": 0.0,
+        "gap": 0,
+        "handle_missing_values": true,
+        "missing_values_method": "interpolate",
+        "handle_outliers": true,
+        "outlier_config": {
+            "method": "isolation_forest",
+            "contamination": 0.1
+        },
+        "remove_anomalies": true,
+        "remove_non_stationarity": false,
+        "add_time_features": true,
+        "add_lag_features": true,
+        "lag_features": [1, 2, 3, 24, 168],
+        "add_rolling_features": true,
+        "rolling_windows": [24, 168],
+        "rolling_functions": ["mean", "std", "min", "max"],
+        "scale_features": false,
+        "scaling_method": "standard",
+        "columns_to_scale": ["value", "temperature", "humidity"]
+    },
+    "model": {
+        "model_type": "prophet",
+        "use_grid_search": false,
+        "optimize_hyperparameters": true,
+        "optimization": {
+            "n_trials": 2,
+            "timeout": 600
+        },
+        "changepoint_prior_scale": 0.05,
+        "seasonality_prior_scale": 10.0,
+        "holidays_prior_scale": 10.0,
+        "seasonality_mode": "additive",
+        "changepoint_range": 0.8,
+        "yearly_seasonality": "auto",
+        "weekly_seasonality": "auto",
+        "daily_seasonality": "auto",
+        "growth": "linear",
+        "n_changepoints": 25,
+        "uncertainty_samples": 1000
+    },
+    "grid_search": {
+        "param_grid": {
+            "changepoint_prior_scale": [0.001, 0.01, 0.1, 0.5],
+            "seasonality_prior_scale": [0.01, 0.1, 1.0, 10.0],
+            "holidays_prior_scale": [0.01, 0.1, 1.0, 10.0],
+            "seasonality_mode": ["additive", "multiplicative"]
+        },
+        "max_iterations": 50,
+        "early_stopping": true,
+        "early_stopping_patience": 5,
+        "timeout": 60
+    },
+    "mlflow": {
+        "experiment_name": "prophet_optimization",
+        "tracking_uri": "http://localhost:5001",
+        "register_model": true
+    },
+    "paths": {
+        "models_dir": "data/models",
+        "analysis_dir": "analysis"
+    },
+    "analysis": {
+        "plots": {
+            "actual_vs_predicted": true,
+            "residuals_analysis": true,
+            "metrics_over_time": true,
+            "seasonal_decomposition": true,
+            "components": true,
+            "rolling_window": 24,
+            "maxlags": 48,
+            "seasonal_period": 24,
+            "significance_level": 0.05
+        },
+        "metrics": [
+            "rmse",
+            "mae",
+            "r2",
+            "mse",
+            "mape",
+            "directional_accuracy"
+        ]
+    }
+} 

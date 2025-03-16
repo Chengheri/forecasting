@@ -668,6 +668,11 @@ class TimeSeriesModel:
         
         logger.info("Fitting final model with best parameters...")
         final_metrics = self.fit(data=ts, params=best_params)
+        hyperparameter_optimization_results = {
+            'best_params': best_params,
+            'best_metrics': final_metrics
+        }
+
         
         if self.tracker:
             logger.debug("Logging optimization results to tracker")
@@ -682,4 +687,4 @@ class TimeSeriesModel:
                 logger.warning(f"Failed to log optimization results: {str(e)}")
         
         logger.info("Optuna optimization completed successfully")
-        return final_metrics 
+        return hyperparameter_optimization_results

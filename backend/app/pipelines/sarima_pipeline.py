@@ -14,7 +14,7 @@ from backend.app.utils.trackers import ARIMATracker
 from backend.app.utils.preprocessing import DataPreprocessor
 from backend.app.utils.logger import Logger
 from backend.app.utils.analyzer import Analyzer
-from backend.app.utils.data_loader import DataLoader
+from backend.app.utils.data_loader import DataLoader, convert_to_native_types
 
 logger = Logger()
 
@@ -38,62 +38,6 @@ def filter_model_params(params: Dict[str, Any], model_type: str) -> Dict[str, An
     if model_type == 'sarima':
         valid_model_params.update({'P', 'D', 'Q', 's', 'maxiter'})
     return {k: v for k, v in params.items() if k in valid_model_params}
-
-def convert_to_native_types(obj: Any) -> Any:
-    """Convert numpy and pandas types to native Python types for JSON serialization.
-    
-    Args:
-        obj: Object to convert
-        
-    Returns:
-        Converted object with native Python types
-    """
-    # Handle None
-    if obj is None:
-        return None
-        
-    # Handle numpy integer types
-    if isinstance(obj, (int, np.integer)):
-        return int(obj)
-        
-    # Handle numpy float types
-    elif isinstance(obj, (float, np.floating)):
-        return float(obj)
-        
-    # Handle numpy bool types
-    elif isinstance(obj, (bool, np.bool_)):
-        return bool(obj)
-        
-    # Handle numpy arrays
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-        
-    # Handle pandas Series
-    elif isinstance(obj, pd.Series):
-        return obj.to_list()
-        
-    # Handle pandas DataFrame
-    elif isinstance(obj, pd.DataFrame):
-        return obj.to_dict(orient='records')
-        
-    # Handle pandas Index
-    elif isinstance(obj, pd.Index):
-        return obj.to_list()
-        
-    # Handle dictionaries
-    elif isinstance(obj, dict):
-        return {str(key): convert_to_native_types(value) for key, value in obj.items()}
-        
-    # Handle lists and tuples
-    elif isinstance(obj, (list, tuple)):
-        return [convert_to_native_types(item) for item in obj]
-        
-    # Handle datetime objects
-    elif isinstance(obj, (datetime, pd.Timestamp)):
-        return obj.isoformat()
-        
-    # Return other types as is
-    return obj
 
 class SARIMAPipeline:
     """Pipeline for training and evaluating SARIMA models."""
@@ -242,9 +186,9 @@ class SARIMAPipeline:
             raise
     
     @handle_pipeline_errors
-    def train_model(self, train_data: pd.DataFrame, test_data: pd.DataFrame,
-                   suggested_params: Dict[str, Any], stationarity_results: Dict[str, Any],
-                   preprocessor: DataPreprocessor) -> Tuple[TimeSeriesModel, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+    def train_model(self, train_data: pd.DataFrame, 
+                   suggested_params: Dict[str, Any],
+        ) -> Tuple[TimeSeriesModel, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
         """Train the ARIMA model.
         
         Args:
@@ -288,12 +232,13 @@ class SARIMAPipeline:
             metrics = grid_search_results['best_metrics']
         elif self.config['model'].get('optimize_hyperparameters'):
             # Perform hyperparameter optimization
-            metrics = model.fit_with_optuna(
+            hyperparameter_optimization_results = model.fit_with_optuna(
                 data=train_series,
                 n_trials=self.config['model']['optimization']['n_trials'],
                 timeout=self.config['model']['optimization']['timeout']
             )
-            model_params = suggested_params
+            model_params = suggested_params.update(hyperparameter_optimization_results['best_params'])
+            metrics = hyperparameter_optimization_results['best_metrics']
             grid_search_results = None
         else:
             # Train model with suggested parameters
@@ -349,24 +294,24 @@ class SARIMAPipeline:
                 'model.arima.p': model_params['p'],
                 'model.arima.d': model_params['d'],
                 'model.arima.q': model_params['q'],
-                'model.arima.P': model_params['P'],
-                'model.arima.D': model_params['D'],
-                'model.arima.Q': model_params['Q'],
-                'model.arima.s': model_params['s'],
-                'model.arima.trend': model_params.get('trend', 'c'),
-                'model.arima.enforce_stationarity': model_params.get('enforce_stationarity', True),
-                'model.arima.enforce_invertibility': model_params.get('enforce_invertibility', True),
-                'model.arima.concentrate_scale': model_params.get('concentrate_scale', False),
-                'model.arima.method': model_params.get('method', 'lbfgs'),
-                'model.arima.maxiter': model_params.get('maxiter', 50)
+                'model.arima.seasonal_p': model_params['P'],
+                'model.arima.seasonal_d': model_params['D'],
+                'model.arima.seasonal_q': model_params['Q'],
+                'model.arima.seasonal_s': model_params['s'],
+                'model.arima.trend': model_params.get('trend', self.config['model']['trend']),
+                'model.arima.enforce_stationarity': model_params.get('enforce_stationarity', self.config['model']['enforce_stationarity']),
+                'model.arima.enforce_invertibility': model_params.get('enforce_invertibility', self.config['model']['enforce_invertibility']),
+                'model.arima.concentrate_scale': model_params.get('concentrate_scale', self.config['model']['concentrate_scale']),
+                'model.arima.method': model_params.get('method', self.config['model']['method']),
+                'model.arima.maxiter': model_params.get('maxiter', self.config['model']['maxiter'])
             }
             self.tracker.log_params_safely(model_params_with_prefix)
             
             # Log training metrics
             training_metrics = {
                 'metrics.training.aic': metrics['aic'],
-                'metrics.training.bic': metrics.get('bic', 0),
-                'metrics.training.hqic': metrics.get('hqic', 0),
+                'metrics.training.bic': metrics.get('bic'),
+                'metrics.training.hqic': metrics.get('hqic'),
             }
             self.tracker.log_metrics_safely(training_metrics)
             # Log test metrics
@@ -374,15 +319,15 @@ class SARIMAPipeline:
                 'metrics.test.rmse': analysis_results['rmse'],
                 'metrics.test.mae': analysis_results['mae'],
                 'metrics.test.mape': analysis_results['mape'],
-                'metrics.test.r2': analysis_results.get('r2', 0),
-                'metrics.test.directional_accuracy': analysis_results.get('directional_accuracy', 0),
-                'metrics.test.residuals_mean': analysis_results.get('residuals_mean', 0),
-                'metrics.test.residuals_std': analysis_results.get('residuals_std', 0),
-                'metrics.test.residuals_skewness': analysis_results.get('residuals_skewness', 0),
-                'metrics.test.residuals_kurtosis': analysis_results.get('residuals_kurtosis', 0),
-                'metrics.test.residuals_autocorrelation': analysis_results.get('residuals_autocorrelation', 0),
-                'metrics.test.residuals_normal': analysis_results.get('residuals_normal', False),
-                'metrics.test.residuals_independent': analysis_results.get('residuals_independent', False)
+                'metrics.test.r2': analysis_results.get('r2'),
+                'metrics.test.directional_accuracy': analysis_results.get('directional_accuracy'),
+                'metrics.test.residuals_mean': analysis_results.get('residuals_mean'),
+                'metrics.test.residuals_std': analysis_results.get('residuals_std'),
+                'metrics.test.residuals_skewness': analysis_results.get('residuals_skewness'),
+                'metrics.test.residuals_kurtosis': analysis_results.get('residuals_kurtosis'),
+                'metrics.test.residuals_autocorrelation': analysis_results.get('residuals_autocorrelation'),
+                'metrics.test.residuals_normal': analysis_results.get('residuals_normal'),
+                'metrics.test.residuals_independent': analysis_results.get('residuals_independent')
             }
             self.tracker.log_metrics_safely(test_metrics)
             
@@ -458,18 +403,18 @@ class SARIMAPipeline:
             'best_model': {
                 'parameters': convert_to_native_types(model_params),
                 'performance': {
-                    'aic': float(metrics.get('aic', 0)),
-                    'bic': float(metrics.get('bic', 0)),
-                    'hqic': float(metrics.get('hqic', 0)),
+                    'aic': float(metrics.get('aic')),
+                    'bic': float(metrics.get('bic')),
+                    'hqic': float(metrics.get('hqic')),
                     'metrics': convert_to_native_types(analysis_results),
                     'residuals_analysis': {
-                        'mean': float(analysis_results.get('residuals_mean', 0)),
-                        'std': float(analysis_results.get('residuals_std', 0)),
-                        'skewness': float(analysis_results.get('residuals_skewness', 0)),
-                        'kurtosis': float(analysis_results.get('residuals_kurtosis', 0)),
-                        'autocorrelation': float(analysis_results.get('residuals_autocorrelation', 0)),
-                        'normal_distribution': bool(analysis_results.get('residuals_normal', False)),
-                        'independent': bool(analysis_results.get('residuals_independent', False))
+                        'mean': float(analysis_results.get('residuals_mean')),
+                        'std': float(analysis_results.get('residuals_std')),
+                        'skewness': float(analysis_results.get('residuals_skewness')),
+                        'kurtosis': float(analysis_results.get('residuals_kurtosis')),
+                        'autocorrelation': float(analysis_results.get('residuals_autocorrelation')),
+                        'normal_distribution': bool(analysis_results.get('residuals_normal')),
+                        'independent': bool(analysis_results.get('residuals_independent'))
                     }
                 },
                 'artifacts': {

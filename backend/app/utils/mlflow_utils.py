@@ -21,17 +21,35 @@ class MLflowTracker:
         
         # Set up experiment
         try:
-            self.experiment_id = mlflow.create_experiment(experiment_name)
-        except Exception:
-            self.experiment_id = mlflow.get_experiment_by_name(experiment_name).experiment_id
-        
-        mlflow.set_experiment(experiment_name)
+            # Try to get existing experiment
+            experiment = mlflow.get_experiment_by_name(experiment_name)
+            if experiment is None:
+                # Create new experiment if it doesn't exist
+                logger.info(f"Creating new experiment: {experiment_name}")
+                self.experiment_id = mlflow.create_experiment(experiment_name)
+            elif experiment.lifecycle_stage == "deleted":
+                # If experiment is deleted, delete it completely and create a new one
+                logger.warning(f"Found deleted experiment '{experiment_name}'. Creating a new one.")
+                mlflow.delete_experiment(experiment.experiment_id)
+                self.experiment_id = mlflow.create_experiment(experiment_name)
+            else:
+                self.experiment_id = experiment.experiment_id
+                logger.info(f"Using existing experiment: {experiment_name}")
+            
+            # Set the experiment
+            mlflow.set_experiment(experiment_name)
+            
+        except Exception as e:
+            logger.error(f"Error setting up experiment: {str(e)}")
+            raise
     
     def format_mlflow_param(self, value: Any) -> str:
         """Format a parameter value to be MLflow-compatible."""
         if isinstance(value, (list, dict, tuple)):
             return str(value)
-        elif isinstance(value, (bool, int, float, str)):
+        elif isinstance(value, (bool, int, float)):
+            return str(value)
+        elif isinstance(value, str):
             return value
         elif value is None:
             return "None"
@@ -97,26 +115,35 @@ class MLflowTracker:
             self.start_run()
         mlflow.log_artifact(local_path, artifact_path)
     
-    def search_runs(self, filter_string: str = "") -> list:
+    def search_runs(self, filter_string: str = "") -> pd.DataFrame:
         """Search for runs with given filter string."""
         logger.info(f"Searching runs with filter: {filter_string}")
-        return mlflow.search_runs(filter_string=filter_string)
+        try:
+            runs_df = mlflow.search_runs(experiment_ids=[self.experiment_id], filter_string=filter_string)
+            return pd.DataFrame(runs_df)
+        except Exception as e:
+            logger.error(f"Error searching runs: {str(e)}")
+            return pd.DataFrame()
     
     def get_best_run(self, metric_name: str, ascending: bool = True) -> Dict[str, Any]:
         """Get the best run based on a metric."""
         logger.info(f"Getting best run for metric: {metric_name}")
-        runs = mlflow.search_runs()
-        if runs.empty:
-            logger.warning("No runs found")
+        try:
+            runs_df = pd.DataFrame(mlflow.search_runs(experiment_ids=[self.experiment_id]))
+            if runs_df.empty:
+                logger.warning("No runs found")
+                return {}
+            
+            best_run = runs_df.sort_values(by=[f"metrics.{metric_name}"], ascending=ascending).iloc[0]
+            return {
+                "run_id": best_run.run_id,
+                "experiment_id": best_run.experiment_id,
+                "metrics": {k: v for k, v in best_run.items() if k.startswith("metrics.")},
+                "params": {k: v for k, v in best_run.items() if k.startswith("params.")}
+            }
+        except Exception as e:
+            logger.error(f"Error getting best run: {str(e)}")
             return {}
-        
-        best_run = runs.sort_values(by=[f"metrics.{metric_name}"], ascending=ascending).iloc[0]
-        return {
-            "run_id": best_run.run_id,
-            "experiment_id": best_run.experiment_id,
-            "metrics": {k: v for k, v in best_run.items() if k.startswith("metrics.")},
-            "params": {k: v for k, v in best_run.items() if k.startswith("params.")}
-        }
     
     def end_run(self) -> None:
         """End the current MLflow run."""

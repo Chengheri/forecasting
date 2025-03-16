@@ -100,3 +100,59 @@ class DataLoader:
         except Exception as e:
             logger.error(f"Error saving data to {file_path}: {str(e)}")
             raise 
+
+def convert_to_native_types(obj: Any) -> Any:
+    """Convert numpy and pandas types to native Python types for JSON serialization.
+    
+    Args:
+        obj: Object to convert
+        
+    Returns:
+        Converted object with native Python types
+    """
+    # Handle None
+    if obj is None:
+        return None
+        
+    # Handle numpy integer types
+    if isinstance(obj, (int, np.integer)):
+        return int(obj)
+        
+    # Handle numpy float types
+    elif isinstance(obj, (float, np.floating)):
+        return float(obj)
+        
+    # Handle numpy bool types
+    elif isinstance(obj, (bool, np.bool_)):
+        return bool(obj)
+        
+    # Handle numpy arrays
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+        
+    # Handle pandas Series
+    elif isinstance(obj, pd.Series):
+        return obj.to_list()
+        
+    # Handle pandas DataFrame
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict(orient='records')
+        
+    # Handle pandas Index
+    elif isinstance(obj, pd.Index):
+        return obj.to_list()
+        
+    # Handle dictionaries
+    elif isinstance(obj, dict):
+        return {str(key): convert_to_native_types(value) for key, value in obj.items()}
+        
+    # Handle lists and tuples
+    elif isinstance(obj, (list, tuple)):
+        return [convert_to_native_types(item) for item in obj]
+        
+    # Handle datetime objects
+    elif isinstance(obj, (datetime, pd.Timestamp)):
+        return obj.isoformat()
+        
+    # Return other types as is
+    return obj

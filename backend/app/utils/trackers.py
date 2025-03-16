@@ -102,7 +102,22 @@ class ForecastingTracker(PreprocessorTracker):
     """Base tracker for forecasting models, combining preprocessing and model tracking."""
     
     def __init__(self, experiment_name: str = "electricity_forecasting", run_name: Optional[str] = None):
-        super().__init__(experiment_name=experiment_name, run_name=run_name)
+        try:
+            super().__init__(experiment_name=experiment_name, run_name=run_name)
+        except Exception as e:
+            if "Cannot set a deleted experiment" in str(e):
+                logger.warning(f"Experiment '{experiment_name}' was deleted. Creating a new one.")
+                # Delete the experiment completely and create a new one
+                import mlflow
+                try:
+                    mlflow.delete_experiment(experiment_name)
+                except:
+                    pass
+                # Create new experiment
+                mlflow.create_experiment(experiment_name)
+                super().__init__(experiment_name=experiment_name, run_name=run_name)
+            else:
+                raise
     
     
 class LSTMTracker(ForecastingTracker):
@@ -128,14 +143,69 @@ class ProphetTracker(ForecastingTracker):
     def log_model_params(self, params: Dict[str, Any]) -> None:
         """Log Prophet-specific parameters."""
         prophet_params = {
-            "changepoint_prior_scale": params.get("changepoint_prior_scale"),
-            "seasonality_prior_scale": params.get("seasonality_prior_scale"),
-            "holidays_prior_scale": params.get("holidays_prior_scale"),
-            "seasonality_mode": params.get("seasonality_mode"),
-            "changepoint_range": params.get("changepoint_range")
+            "changepoint_prior_scale": params.get("changepoint_prior_scale", 0.05),
+            "seasonality_prior_scale": params.get("seasonality_prior_scale", 10.0),
+            "holidays_prior_scale": params.get("holidays_prior_scale", 10.0),
+            "seasonality_mode": params.get("seasonality_mode", "additive"),
+            "changepoint_range": params.get("changepoint_range", 0.8),
+            "growth": params.get("growth", "linear"),
+            "n_changepoints": params.get("n_changepoints", 25),
+            "yearly_seasonality": params.get("yearly_seasonality", "auto"),
+            "weekly_seasonality": params.get("weekly_seasonality", "auto"),
+            "daily_seasonality": params.get("daily_seasonality", "auto")
         }
         prefixed_params = self._prefix_dict_keys(prophet_params, "model.prophet")
         self.log_params_safely(prefixed_params)
+    
+    def log_training_metrics(self, metrics: Dict[str, float]) -> None:
+        """Log Prophet training metrics."""
+        training_metrics = {
+            "mse": metrics.get("mse"),
+            "rmse": metrics.get("rmse"),
+            "mae": metrics.get("mae"),
+            "mape": metrics.get("mape"),
+            "r2": metrics.get("r2")
+        }
+        # Filter out None values
+        training_metrics = {k: v for k, v in training_metrics.items() if v is not None}
+        prefixed_metrics = self._prefix_dict_keys(training_metrics, "metrics.training")
+        self.log_metrics_safely(prefixed_metrics)
+    
+    def log_optimization_results(self, results: Dict[str, Any], method: str = "optuna") -> None:
+        """Log hyperparameter optimization results."""
+        if method == "optuna":
+            optimization_info = {
+                "best_value": results.get("best_value"),
+                "n_trials": results.get("n_trials"),
+                "timeout": results.get("timeout")
+            }
+            # Log best parameters separately
+            if "best_params" in results:
+                for param_name, param_value in results["best_params"].items():
+                    optimization_info[f"best_params.{param_name}"] = param_value
+        else:  # grid search
+            optimization_info = {
+                "total_combinations": results.get("total_combinations_tested"),
+                "best_rmse": results.get("best_metrics", {}).get("rmse") if results.get("best_metrics") else None
+            }
+            # Log best parameters separately
+            if "best_params" in results:
+                for param_name, param_value in results["best_params"].items():
+                    optimization_info[f"best_params.{param_name}"] = param_value
+        
+        prefixed_info = self._prefix_dict_keys(optimization_info, f"optimization.{method}")
+        self.log_params_safely(prefixed_info)
+    
+    def log_forecast_metrics(self, metrics: Dict[str, float]) -> None:
+        """Log forecast evaluation metrics."""
+        forecast_metrics = {
+            "rmse": metrics.get("rmse"),
+            "mae": metrics.get("mae"),
+            "mape": metrics.get("mape"),
+            "r2": metrics.get("r2")
+        }
+        prefixed_metrics = self._prefix_dict_keys(forecast_metrics, "metrics.forecast")
+        self.log_metrics_safely(prefixed_metrics)
 
 class ARIMATracker(ForecastingTracker):
     """Tracker for ARIMA model training and evaluation."""
