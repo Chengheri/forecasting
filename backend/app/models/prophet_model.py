@@ -5,7 +5,6 @@ from prophet import Prophet
 import joblib
 import warnings
 from ..utils.logger import Logger
-from ..utils.metrics import ForecastingMetrics
 from ..utils.trackers import ProphetTracker
 import optuna
 import tempfile

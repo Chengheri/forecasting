@@ -10,7 +10,7 @@ logger = Logger()
 
 class DataLoader:
     def __init__(self, config: Dict[str, Any]):
-        logger.debug(f"Initializing DataLoader with config: {config}")
+        logger.info(f"Initializing DataLoader...")
         self.config = config
 
     def load_csv(self, file_path: str = "", date_column: str = None,

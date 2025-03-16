@@ -167,6 +167,10 @@ class DataPreprocessor:
             "gap": gap,
             "shuffle": shuffle
         })
+        # Log data split information
+        logger.info(f"Split data into {len(train_data)} training samples and {len(test_data)} test samples")
+        logger.info(f"Training data date range: {train_data.index[0]} to {train_data.index[-1]}")
+        logger.info(f"Test data date range: {test_data.index[0]} to {test_data.index[-1]}")
         
         # Return appropriate tuple based on whether validation set was requested
         if validation_ratio > 0:

@@ -1,5 +1,6 @@
 import sys
 import os
+import argparse
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
 import pandas as pd
@@ -8,6 +9,7 @@ from datetime import datetime
 import mlflow
 import matplotlib.pyplot as plt
 from backend.app.models.prophet_model import ProphetModel
+from backend.app.models.neuralprophet_model import NeuralProphetModel
 from backend.app.utils.trackers import ProphetTracker
 from backend.app.utils.logger import Logger
 from backend.app.utils.advanced_preprocessing import AdvancedPreprocessor
@@ -22,14 +24,28 @@ from typing import Dict, Any, Tuple, Optional, Union
 # Initialize logger
 logger = Logger()
 
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description='Train a forecasting model')
+    parser.add_argument('--model', type=str, choices=['prophet', 'neuralprophet'], 
+                        default='prophet', help='Model type to train (prophet or neuralprophet)')
+    return parser.parse_args()
+
 @log_execution_time
 def main():
     """Main function to train and evaluate Prophet model."""
+    # Initialize tracker to None so it's always defined
+    tracker = None
+    
     try:
+        # Parse command line arguments
+        args = parse_arguments()
+        model_type = args.model
+        
         # Load configuration and initialize tracking
-        config = load_config()
+        config = load_config(model_type)
         run_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        tracker = initialize_tracking(config, run_timestamp)
+        tracker = initialize_tracking(config, model_type, run_timestamp)
         
         # Initialize pipeline and process data
         pipeline = ProphetPipeline(config=config, tracker=tracker)
@@ -41,7 +57,7 @@ def main():
         
         # Save model and analyze results
         model_artifacts = save_model_artifacts(pipeline, model, model_params, test_data, mean_forecast, 
-                                            confidence_intervals)
+                                            confidence_intervals, model_type)
         model_path, analysis_path, model_file_path, analysis_results = model_artifacts
         
         # Track results and create summary
@@ -56,20 +72,31 @@ def main():
         if tracker:
             tracker.end_run()
 
-def load_config() -> Dict[str, Any]:
-    """Load configuration from file."""
-    with open('config/config_prophet.json', 'r') as f:
-        return json.load(f)
+def load_config(model_type: str) -> Dict[str, Any]:
+    """Load configuration from file based on model type."""
+    config_file = f'config/config_{model_type}.json'
+    logger.info(f"Loading configuration from {config_file}")
+    
+    try:
+        with open(config_file, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error(f"Configuration file {config_file} not found")
+        raise
 
-def initialize_tracking(config: Dict[str, Any], run_timestamp: str) -> ProphetTracker:
+def initialize_tracking(config: Dict[str, Any], model_type: str, run_timestamp: str) -> ProphetTracker:
     """Initialize MLflow tracking."""
+    experiment_name = config['mlflow']['experiment_name']
+    run_name = f"{model_type}_{run_timestamp}"
+    
+    logger.info(f"Initializing MLflow tracker for experiment: {experiment_name}")
     tracker = ProphetTracker(
-        experiment_name=config['mlflow']['experiment_name'],
-        run_name=f"prophet_{run_timestamp}"
+        experiment_name=experiment_name,
+        run_name=run_name
     )
     return tracker
 
-def process_data(pipeline: ProphetPipeline) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+def process_data(pipeline: ProphetPipeline) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load, prepare and split data using pipeline."""
     data = pipeline.load_data()
     data = pipeline.prepare_data(data)
@@ -92,15 +119,16 @@ def train_and_evaluate_model(pipeline: ProphetPipeline,
     return model, model_params, metrics, grid_search_results, mean_forecast, confidence_intervals
 
 def save_model_artifacts(pipeline: ProphetPipeline,
-                        model: ProphetModel,
+                        model: Union[ProphetModel, NeuralProphetModel],
                         model_params: Dict[str, Any],
                         test_data: pd.DataFrame,
                         mean_forecast: np.ndarray,
                         confidence_intervals: Optional[Tuple[np.ndarray, np.ndarray]],
+                        model_type: str,
 ) -> Tuple:
     """Save model and generate analysis artifacts."""
     # Create directories
-    model_path, analysis_path, model_file_path = create_model_directories('prophet', model_params)
+    model_path, analysis_path, model_file_path = create_model_directories(model_type, model_params)
     
     # Save model
     model.save(model_file_path)
@@ -117,11 +145,12 @@ def save_model_artifacts(pipeline: ProphetPipeline,
 
 def create_model_directories(model_type: str, model_params: Dict[str, Any]) -> Tuple[str, str, str]:
     """Create necessary directories for model artifacts."""
-    model_name = f"prophet_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    model_name = f"{model_type}_{timestamp}"
     
     model_path = os.path.join("data/models", model_name)
     analysis_path = os.path.join(model_path, "analysis")
-    model_file_path = os.path.join(model_path, "model", "prophet_model.joblib")
+    model_file_path = os.path.join(model_path, "model", f"{model_type}_model.joblib")
     
     os.makedirs(os.path.join(model_path, "model"), exist_ok=True)
     os.makedirs(analysis_path, exist_ok=True)
@@ -171,4 +200,11 @@ def track_and_summarize_results(pipeline: ProphetPipeline,
     return model_summary
 
 if __name__ == "__main__":
+    # Print usage instructions
+    print("Training forecasting model")
+    print("Usage: python train_prophet.py [--model {prophet,neuralprophet}]")
+    print("Example: python train_prophet.py --model neuralprophet")
+    print("\nStarting training process...\n")
+    
+    # Run the main function
     main() 

@@ -5,11 +5,9 @@ from functools import wraps
 
 import numpy as np
 import pandas as pd
-import mlflow
-import joblib
-from prophet import Prophet
 
 from backend.app.models.prophet_model import ProphetModel
+from backend.app.models.neuralprophet_model import NeuralProphetModel
 from backend.app.utils.trackers import ProphetTracker
 from backend.app.utils.preprocessing import DataPreprocessor
 from backend.app.utils.analyzer import Analyzer
@@ -54,9 +52,7 @@ class ProphetPipeline(BasePipeline):
         Returns:
             pd.DataFrame: Loaded data
         """
-        self._log_info("Initializing DataLoader")
         data_loader = DataLoader(config=self.config)
-        
         data = data_loader.load_csv()
         return data
     
@@ -87,9 +83,7 @@ class ProphetPipeline(BasePipeline):
             Tuple containing:
             - Processed time series data as pd.DataFrame
             - Dictionary with stationarity analysis results
-        """
-        self._log_info("Checking stationarity of time series data")
-        
+        """        
         try:
             # Create a copy of the input DataFrame
             processed_data = data.copy()
@@ -100,10 +94,7 @@ class ProphetPipeline(BasePipeline):
 
             # For Prophet, we don't need to remove non-stationarity as it handles it internally
             # But we still analyze it for reporting purposes
-            self._log_info("Starting stationarity analysis...")
-            results = self.analyzer.check_stationarity(ts)
-            self._log_info("Stationarity analysis completed")
-                
+            results = self.analyzer.check_stationarity(ts)                
             return processed_data, results
             
         except Exception as e:
@@ -118,9 +109,7 @@ class ProphetPipeline(BasePipeline):
             
         Returns:
             Tuple[pd.DataFrame, pd.DataFrame]: Training and test datasets
-        """
-        self._log_info(f"Splitting time series data with train_ratio={self.config['preprocessing']['train_ratio']}")
-        
+        """        
         try:
             # Convert data to DataFrame if it's a Series
             if isinstance(data, pd.Series):
@@ -140,13 +129,7 @@ class ProphetPipeline(BasePipeline):
             )
             
             # Ensure we only get train and test data
-            train_data, test_data = split_result[0], split_result[1]
-            
-            # Log data split information
-            self._log_info(f"Split data into {len(train_data)} training samples and {len(test_data)} test samples")
-            self._log_info(f"Training data date range: {train_data.index[0]} to {train_data.index[-1]}")
-            self._log_info(f"Test data date range: {test_data.index[0]} to {test_data.index[-1]}")
-            
+            train_data, test_data = split_result[0], split_result[1]            
             return train_data, test_data
             
         except Exception as e:
@@ -154,8 +137,8 @@ class ProphetPipeline(BasePipeline):
             raise
     
     @handle_pipeline_errors
-    def train_model(self, train_data: pd.DataFrame) -> Tuple[ProphetModel, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
-        """Train the Prophet model.
+    def train_model(self, train_data: pd.DataFrame) -> Tuple[Union[ProphetModel, NeuralProphetModel], Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Train the Prophet or NeuralProphet model.
         
         Args:
             train_data: Training dataset            
@@ -166,11 +149,15 @@ class ProphetPipeline(BasePipeline):
                 - Training metrics
                 - Grid search results (if performed)
         """                
-        # Initialize model
-        model = ProphetModel(
-            config=self.config,
-            tracker=self.tracker
-        )
+        # Initialize model based on configuration
+        if self.config['model'].get('model_type', 'prophet').lower() == 'neuralprophet':
+            model = NeuralProphetModel(config=self.config)
+        else:
+            model = ProphetModel(
+                config=self.config,
+                tracker=self.tracker
+            )
+            
         model_params = model.config['model']
         train_data = model.prepare_data(train_data)
         
@@ -197,7 +184,6 @@ class ProphetPipeline(BasePipeline):
             grid_search_results = None
         else:
             # Train model with suggested parameters
-            self._log_info("Starting model training with suggested parameters...")
             metrics = model.fit(data=train_data)
             grid_search_results = None
         
@@ -215,9 +201,7 @@ class ProphetPipeline(BasePipeline):
             Tuple containing:
                 - Mean forecast as numpy array
                 - Optional tuple of confidence intervals (lower, upper) as numpy arrays
-        """
-        self._log_info(f"Generating predictions for test data with {len(test_data)} steps")
-        
+        """        
         predictions, confidence_intervals = model.predict(len(test_data))
         
         return predictions, confidence_intervals

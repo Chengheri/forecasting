@@ -424,7 +424,8 @@ class Analyzer:
             logger.info(f"Stationarity test results: {'Stationary' if assessment['is_stationary'] else 'Non-stationary'}")
             logger.info(f"ADF test p-value: {test_results['adf_test']['pvalue']:.4f}")
             logger.info(f"KPSS test p-value: {test_results['kpss_test']['pvalue']:.4f}")
-            
+            logger.info("Stationarity analysis completed")
+
             return results
             
         except Exception as e:

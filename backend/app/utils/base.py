@@ -25,11 +25,7 @@ class LoggedObject:
             extra: Optional extra fields to include in the log
         """
         log_method = getattr(self._logger, level)
-        if extra:
-            # Format extra fields into the message
-            extra_str = ' '.join(f"{k}={v}" for k, v in extra.items())
-            message = f"{message} | {extra_str}"
-        log_method(message)
+        log_method(message, extra=extra)
     
     def _log_info(self, message: str, **kwargs):
         """Log info message with proper module context."""
