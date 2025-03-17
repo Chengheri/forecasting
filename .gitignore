@@ -46,3 +46,12 @@ mlruns/
 # OS specific
 .DS_Store
 Thumbs.db 
+
+# Frontend
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+frontend/package-lock.json
+frontend/yarn.lock
+
+# Backend

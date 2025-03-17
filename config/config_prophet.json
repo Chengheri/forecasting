@@ -2,7 +2,9 @@
     "data": {
         "path": "data/examples/consumption_data_france.csv",
         "index_column": "date",
-        "target_column": "value"
+        "target_column": "value",
+        "date_column": "ds",
+        "frequency": "D"
     },
     "preprocessing": {
         "train_ratio": 0.8,
@@ -40,12 +42,11 @@
         "holidays_prior_scale": 10.0,
         "seasonality_mode": "additive",
         "changepoint_range": 0.8,
-        "yearly_seasonality": "auto",
-        "weekly_seasonality": "auto",
-        "daily_seasonality": "auto",
         "growth": "linear",
         "n_changepoints": 25,
-        "uncertainty_samples": 1000
+        "yearly_seasonality": "auto",
+        "weekly_seasonality": "auto",
+        "daily_seasonality": "auto"
     },
     "grid_search": {
         "param_grid": {
@@ -88,5 +89,9 @@
             "mape",
             "directional_accuracy"
         ]
+    },
+    "training": {
+        "validation_size": 0.2,
+        "test_size": 0.1
     }
 } 

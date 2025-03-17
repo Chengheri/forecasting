@@ -50,7 +50,7 @@
         "epochs": 100,
         "batch_size": 64,
         "n_forecasts": 1,
-        "n_lags": 0,
+        "n_lags": 48,
         "num_hidden_layers": 2,
         "hidden_size": 64,
         "dropout": 0.1,
