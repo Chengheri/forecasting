@@ -54,4 +54,5 @@ frontend/dist/
 frontend/package-lock.json
 frontend/yarn.lock
 
-# Backend
+# Lightning logs
+lightning_logs/

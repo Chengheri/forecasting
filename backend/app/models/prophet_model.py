@@ -24,7 +24,6 @@ class ProphetModel:
         tracker: Optional[ProphetTracker] = None,    
     ):
         """Initialize ProphetModel with parameters and optionally with data."""
-        logger.info("Initializing ProphetModel")
         logger.debug(f"Configuration provided: {config}")
 
         self.config = config
@@ -38,15 +37,12 @@ class ProphetModel:
     
     def _log_initialization(self) -> None:
         """Log initialization parameters."""
-        logger.info("Initialized Prophet model with parameters:")
-        logger.info(f"Changepoint prior scale: {self.config['model'].get('changepoint_prior_scale', 0.05)}")
-        logger.info(f"Seasonality prior scale: {self.config['model'].get('seasonality_prior_scale', 10.0)}")
-        logger.info(f"Seasonality mode: {self.config['model'].get('seasonality_mode', 'additive')}")
+        logger.info(f"Initialized {self.config['model']['model_type'].title()} model...")
         
         if self.tracker:
             logger.debug("Logging model parameters to tracker")
             self.tracker.log_params_safely({
-                'model.type': 'prophet'
+                'model.type': self.config['model']['model_type']
             })
     
     def prepare_data(self, data: Union[pd.DataFrame, pd.Series, np.ndarray]) -> pd.DataFrame:

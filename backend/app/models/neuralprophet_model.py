@@ -1,8 +1,9 @@
-from typing import Dict, Any, Optional, Tuple, Union, List
+from typing import Dict, Any, Optional, Tuple, Union, List, cast
 import pandas as pd
 import numpy as np
 import torch
 from neuralprophet import NeuralProphet
+from prophet import Prophet
 import optuna
 
 from .prophet_model import ProphetModel
@@ -21,7 +22,7 @@ class NeuralProphetModel(ProphetModel):
     ):
         """Initialize NeuralProphetModel with parameters."""
         super().__init__(config, tracker)
-        logger.info("Initializing NeuralProphetModel")
+        self.neural_model: Optional[NeuralProphet] = None
         
     def prepare_data(self, data: Union[pd.DataFrame, pd.Series, np.ndarray]) -> pd.DataFrame:
         """Prepare data for NeuralProphet model."""
@@ -30,36 +31,82 @@ class NeuralProphetModel(ProphetModel):
         
     def initialize_model(self) -> None:
         """Initialize the NeuralProphet model with data."""
-        logger.info("Initializing NeuralProphet model...")
+        logger.info("Initializing model...")
         
         try:
             # Get NeuralProphet specific parameters
             np_params = {
                 # Common Prophet parameters
-                'seasonality_mode': self.config['model'].get('seasonality_mode', 'additive'),
-                'yearly_seasonality': self.config['model'].get('yearly_seasonality', 'auto'),
-                'weekly_seasonality': self.config['model'].get('weekly_seasonality', 'auto'),
-                'daily_seasonality': self.config['model'].get('daily_seasonality', 'auto'),
-                'growth': self.config['model'].get('growth', 'linear'),
-                'changepoints_range': self.config['model'].get('changepoint_range', 0.8),
-                'n_changepoints': self.config['model'].get('n_changepoints', 25),
+                'seasonality_mode': self.config['model'].get('seasonality_mode'),
+                'yearly_seasonality': self.config['model'].get('yearly_seasonality'),
+                'weekly_seasonality': self.config['model'].get('weekly_seasonality'),
+                'daily_seasonality': self.config['model'].get('daily_seasonality'),
+                'growth': self.config['model'].get('growth'),
+                'changepoints_range': self.config['model'].get('changepoint_range'),
+                'n_changepoints': self.config['model'].get('n_changepoints'),
                 
                 # NeuralProphet specific parameters
-                'learning_rate': self.config['model'].get('learning_rate', 0.001),
-                'epochs': self.config['model'].get('epochs', 100),
-                'batch_size': self.config['model'].get('batch_size', 64),
-                'n_forecasts': self.config['model'].get('n_forecasts', 1),
-                'n_lags': self.config['model'].get('n_lags', 0),
-                'num_hidden_layers': self.config['model'].get('num_hidden_layers', 2),
-                'dropout': self.config['model'].get('dropout', 0.1),
+                'learning_rate': self.config['model'].get('learning_rate'),
+                'epochs': self.config['model'].get('epochs'),
+                'batch_size': self.config['model'].get('batch_size'),
+                'n_forecasts': self.config['model'].get('n_forecasts'),
+                'n_lags': self.config['model'].get('n_lags'),
+                'ar_reg': self.config['model'].get('ar_reg'),
+                'normalize': self.config['model'].get('normalize'),
+                'quantiles': self.config['model'].get('quantiles'),
+                'future_regressors_model': self.config['model'].get('future_regressors_model'),
+                'future_regressors_d_hidden': self.config['model'].get('future_regressors_d_hidden'),
+                'future_regressors_num_hidden_layers': self.config['model'].get('future_regressors_num_hidden_layers'),
             }
-            
             # Create NeuralProphet model
-            self.model = NeuralProphet(**np_params)
+            self.neural_model = NeuralProphet(**np_params)
+            # For compatibility with ProphetModel parent class
+            self.model = cast(Optional[Prophet], self.neural_model)
             logger.info("NeuralProphet model initialized successfully")
+            logger.debug(f"NeuralProphet parameters: {np_params}")
             
         except Exception as e:
             logger.error(f"Error initializing NeuralProphet model: {str(e)}")
+            raise
+
+    def predict(self, data: pd.DataFrame) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+        """Generate predictions using the fitted NeuralProphet model."""
+        if self.neural_model is None:
+            raise ValueError("Model must be trained before prediction")
+        
+        forecast = self.neural_model.predict(data)
+        df_fc = self.neural_model.get_latest_forecast(forecast)
+        print(df_fc)
+        return df_fc
+
+    def predict_into_future(self, data: pd.DataFrame, steps: int) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
+        """Generate predictions using the fitted NeuralProphet model."""
+        if self.neural_model is None:
+            raise ValueError("Model must be trained before prediction")
+        
+        logger.info(f"Generating NeuralProphet predictions for {steps} steps")
+        
+        try:
+            # NeuralProphet uses a different approach for creating future data
+            # We need the last period of data to make predictions due to AR structure
+            # Generate forecast
+            future = self.neural_model.make_future_dataframe(
+                df=data, 
+                periods=steps,
+                n_historic_predictions=False
+            )
+            
+            logger.debug(f"Created future dataframe with shape: {future.shape}")
+            forecast = self.neural_model.predict(future)
+            
+            # Extract predictions and confidence intervals, ensuring numpy array types
+            predictions = np.asarray(forecast['yhat1'].values[-steps:], dtype=np.float64)
+            
+            logger.info("NeuralProphet predictions generated successfully")
+            return predictions
+            
+        except Exception as e:
+            logger.error(f"Error generating NeuralProphet predictions: {str(e)}")
             raise
     
     def fit(self, data: Union[pd.Series, pd.DataFrame, np.ndarray], params: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
@@ -68,9 +115,9 @@ class NeuralProphetModel(ProphetModel):
             # Update parameters if provided
             if params:
                 self.config['model'].update(params)
-            self.initialize_model()
+                self.initialize_model()
             
-            if self.model is None:
+            if self.neural_model is None:
                 raise ValueError("Model must be initialized before fitting")
             
             # Prepare data if needed
@@ -84,11 +131,12 @@ class NeuralProphetModel(ProphetModel):
             
             # Fit model
             logger.info("Fitting NeuralProphet model")
-            metrics = self.model.fit(prepared_data, **self.config['model'].get('fit_params', {}))
-            
-            # Calculate metrics on training data
-            train_metrics = self._calculate_metrics(prepared_data)
-            
+            metrics = self.neural_model.fit(prepared_data, **self.config['model'].get('fit_params', {}))
+            train_metrics = {
+                'mae': metrics['MAE'].min(),
+                'rmse': metrics['RMSE'].min(),
+            }
+            self.fitted_model = self.neural_model
             # Convert numpy types to Python native types
             train_metrics = {k: float(v) for k, v in train_metrics.items()}
             
@@ -112,18 +160,20 @@ class NeuralProphetModel(ProphetModel):
             """Optimization objective function."""
             params = {
                 # Prophet Parameters
-                'changepoint_prior_scale': trial.suggest_loguniform('changepoint_prior_scale', 0.001, 0.5),
-                'seasonality_prior_scale': trial.suggest_loguniform('seasonality_prior_scale', 0.01, 10),
-                'holidays_prior_scale': trial.suggest_loguniform('holidays_prior_scale', 0.01, 10),
                 'seasonality_mode': trial.suggest_categorical('seasonality_mode', ['additive', 'multiplicative']),
                 
                 # NeuralProphet specific parameters
                 'learning_rate': trial.suggest_loguniform('learning_rate', 0.0001, 0.1),
                 'epochs': trial.suggest_int('epochs', 50, 200),
-                'batch_size': trial.suggest_categorical('batch_size', [16, 32, 64, 128]),
-                'num_hidden_layers': trial.suggest_int('num_hidden_layers', 1, 4),
-                'hidden_size': trial.suggest_int('hidden_size', 32, 256),
-                'dropout': trial.suggest_uniform('dropout', 0.1, 0.5),
+                'batch_size': trial.suggest_categorical('batch_size', [16, 32, 64, 128, 256, 512]),
+                'n_changepoints': trial.suggest_int('n_changepoints', 10, 50),
+                'n_forecasts': trial.suggest_int('n_forecasts', 1, 5),
+                'n_lags': trial.suggest_int('n_lags', 24, 72),
+                'ar_reg': trial.suggest_float('ar_reg', 0.01, 1.0),
+                'normalize': trial.suggest_categorical('normalize', ['auto', 'minmax', 'standardize']),
+                'future_regressors_model': trial.suggest_categorical('future_regressors_model', ['linear', 'neural_nets']),
+                'future_regressors_d_hidden': trial.suggest_int('future_regressors_d_hidden', 1, 10),
+                'future_regressors_num_hidden_layers': trial.suggest_int('future_regressors_num_hidden_layers', 1, 3),
             }
             
             try:
@@ -143,10 +193,10 @@ class NeuralProphetModel(ProphetModel):
         logger.info(f"Best parameters found: {best_params}")
         
         # Update model with best parameters and fit
+        logger.info("Updating model with best parameters and fitting...")
         self.config['model'].update(best_params)
         self.initialize_model()
-        final_metrics = self.fit(data)
-        
+        final_metrics = self.fit(data)        
         # Convert all metrics to Python native types
         final_metrics = {k: float(v) for k, v in final_metrics.items()}
         
@@ -175,7 +225,7 @@ class NeuralProphetModel(ProphetModel):
             import os
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, 'wb') as f:
-                torch.save(self.fitted_model, f)
+                torch.save(self.neural_model, f)
         except Exception as e:
             logger.error(f"Error saving model: {str(e)}")
             raise
@@ -185,8 +235,8 @@ class NeuralProphetModel(ProphetModel):
         logger.info(f"Loading NeuralProphet model from {path}")
         try:
             with open(path, 'rb') as f:
-                self.fitted_model = torch.load(f)
-            self.model = self.fitted_model
+                self.neural_model = torch.load(f)
+            self.model = cast(Optional[Prophet], self.neural_model)
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")
             raise 

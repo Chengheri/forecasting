@@ -184,6 +184,7 @@ class ProphetPipeline(BasePipeline):
             grid_search_results = None
         else:
             # Train model with suggested parameters
+            model.initialize_model()
             metrics = model.fit(data=train_data)
             grid_search_results = None
         
@@ -201,8 +202,12 @@ class ProphetPipeline(BasePipeline):
             Tuple containing:
                 - Mean forecast as numpy array
                 - Optional tuple of confidence intervals (lower, upper) as numpy arrays
-        """        
-        predictions, confidence_intervals = model.predict(len(test_data))
+        """
+        if isinstance(model, NeuralProphetModel):
+            test_data = model.prepare_data(test_data)
+            predictions = model.predict(test_data)
+        else:
+            predictions, confidence_intervals = model.predict(len(test_data))
         
         return predictions, confidence_intervals
     

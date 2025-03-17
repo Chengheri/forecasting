@@ -6,19 +6,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import mlflow
-import matplotlib.pyplot as plt
 from backend.app.models.prophet_model import ProphetModel
 from backend.app.models.neuralprophet_model import NeuralProphetModel
 from backend.app.utils.trackers import ProphetTracker
 from backend.app.utils.logger import Logger
-from backend.app.utils.advanced_preprocessing import AdvancedPreprocessor
-from backend.app.utils.analyzer import Analyzer
 from backend.app.utils.decorators import log_execution_time
 from backend.app.pipelines.prophet_pipeline import ProphetPipeline
 import json
-from prophet import Prophet
-import joblib
 from typing import Dict, Any, Tuple, Optional, Union
 
 # Initialize logger
@@ -89,7 +83,6 @@ def initialize_tracking(config: Dict[str, Any], model_type: str, run_timestamp: 
     experiment_name = config['mlflow']['experiment_name']
     run_name = f"{model_type}_{run_timestamp}"
     
-    logger.info(f"Initializing MLflow tracker for experiment: {experiment_name}")
     tracker = ProphetTracker(
         experiment_name=experiment_name,
         run_name=run_name
