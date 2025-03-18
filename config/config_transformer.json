@@ -1,0 +1,98 @@
+{
+    "data": {
+        "path": "data/examples/consumption_data_france.csv",
+        "index_column": "date",
+        "target_column": "value",
+        "date_column": "ds",
+        "frequency": "D",
+        "features": ["temperature", "humidity"]
+    },
+    "preprocessing": {
+        "train_ratio": 0.8,
+        "validation_ratio": 0.1,
+        "gap": 0,
+        "handle_missing_values": true,
+        "missing_values_method": "interpolate",
+        "handle_outliers": true,
+        "outlier_config": {
+            "method": "isolation_forest",
+            "contamination": 0.1
+        },
+        "remove_anomalies": true,
+        "remove_non_stationarity": true,
+        "add_time_features": true,
+        "add_lag_features": true,
+        "lag_features": [1, 2, 3, 7, 14, 30],
+        "add_rolling_features": true,
+        "rolling_windows": [7, 14, 30],
+        "rolling_functions": ["mean", "std", "min", "max"],
+        "scale_features": false,
+        "scaling_method": "standard",
+        "columns_to_scale": ["value"],
+        "sequence_length": 24
+    },
+    "model": {
+        "model_type": "transformer",
+        "use_grid_search": false,
+        "optimize_hyperparameters": false,
+        "optimization": {
+            "n_trials": 20,
+            "timeout": 600
+        },
+        "input_size": 1,
+        "d_model": 64,
+        "nhead": 4,
+        "num_layers": 2,
+        "dim_feedforward": 256,
+        "output_size": 1,
+        "dropout": 0.1,
+        "learning_rate": 0.001,
+        "epochs": 100,
+        "batch_size": 32,
+        "loss_function": "mse",
+        "optimizer": "adam",
+        "weight_decay": 0.0001,
+        "clip_gradient": 1.0,
+        "sequence_length": 24,
+        "prediction_length": 24
+    },
+    "mlflow": {
+        "experiment_name": "transformer_forecasting",
+        "tracking_uri": "http://localhost:5001",
+        "register_model": true
+    },
+    "paths": {
+        "models_dir": "data/models",
+        "analysis_dir": "analysis"
+    },
+    "analysis": {
+        "plots": {
+            "actual_vs_predicted": true,
+            "residuals_analysis": true,
+            "metrics_over_time": true,
+            "seasonal_decomposition": true,
+            "loss_curve": true,
+            "rolling_window": 24,
+            "maxlags": 48,
+            "seasonal_period": 24,
+            "significance_level": 0.05
+        },
+        "metrics": [
+            "rmse",
+            "mae",
+            "r2",
+            "mse",
+            "mape",
+            "directional_accuracy"
+        ]
+    },
+    "training": {
+        "validation_size": 0.2,
+        "test_size": 0.1,
+        "shuffle": false,
+        "early_stopping": true,
+        "patience": 10,
+        "monitor": "val_loss",
+        "min_delta": 0.001
+    }
+} 

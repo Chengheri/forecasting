@@ -9,12 +9,12 @@ from datetime import datetime
 
 from ..utils.base import LoggedObject
 from ..utils.analyzer import Analyzer
-from ..utils.preprocessor import DataPreprocessor
+from ..utils.preprocessing import DataPreprocessor
 from ..utils.trackers import ForecastingTracker
 from ..utils.data_loader import DataLoader, convert_to_native_types
 from ..utils.logger import Logger
 from ..utils.decorators import handle_pipeline_errors
-
+from ..models.base_model import BaseForecastingModel
 logger = Logger()
 
 class BasePipeline(LoggedObject):
@@ -87,8 +87,8 @@ class BasePipeline(LoggedObject):
         return pd.DataFrame(prepared_data)
 
     @handle_pipeline_errors
-    def train_model(self, model: ForcastingModel, train_data: pd.DataFrame) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
-        """Train the LSTM model.
+    def train_model(self, model: BaseForecastingModel, train_data: pd.DataFrame) -> Tuple[Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Train the forecasting model.
         
         Args:
             train_data: Training dataset            
@@ -116,7 +116,7 @@ class BasePipeline(LoggedObject):
         return model, metrics, optimization_results
     
     @handle_pipeline_errors
-    def test_model(self, model: LSTMForecastModel, test_data: pd.DataFrame) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, np.ndarray]]]:
+    def test_model(self, model: BaseForecastingModel, test_data: pd.DataFrame) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, np.ndarray]]]:
         """Generate predictions for test data.
         
         Args:
@@ -147,6 +147,8 @@ class BasePipeline(LoggedObject):
         Returns:
             Dict[str, Any]: Analysis results and metrics
         """
+        if len(mean_forecast) < len(test_data):
+            test_data = test_data.iloc[:len(mean_forecast)]
         # Convert test data to numpy array if needed
         target_col = self.config['data']['target_column']
         actual_values = test_data[target_col].to_numpy()

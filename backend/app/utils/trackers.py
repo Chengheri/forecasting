@@ -2,12 +2,11 @@
 Model and preprocessing tracking utilities for MLflow.
 """
 
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 import numpy as np
 import pandas as pd
 from .mlflow_utils import MLflowTracker
 from ..utils.logger import Logger
-import mlflow
 
 logger = Logger()
 
@@ -180,6 +179,10 @@ class LSTMTracker(ForecastingTracker):
 
 class ProphetTracker(ForecastingTracker):
     """Tracker for Prophet model training and evaluation."""
+    pass
+
+class TransformerTracker(ForecastingTracker):
+    """Tracker for Transformer model training and evaluation."""
     pass
 
 class ARIMATracker(ForecastingTracker):

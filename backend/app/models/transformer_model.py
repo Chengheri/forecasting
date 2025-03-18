@@ -1,25 +1,28 @@
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional, Tuple
+import torch.optim as optim
+from typing import Dict, Any, Optional, Tuple, Union, List, Callable
 import pandas as pd
 import numpy as np
-from .base_model import BaseForecastingModel
+from .torch_model import TorchModel
 import optuna
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from ..utils.trackers import ForecastingTracker
 from ..utils.logger import Logger
 
 logger = Logger()
 
 class TransformerModel(nn.Module):
-    def __init__(self, d_model: int, nhead: int, num_layers: int, dim_feedforward: int = 2048,
-                 dropout: float = 0.1):
+    def __init__(self, d_model: int, nhead: int, num_layers: int, input_size: int = 1,
+                 dim_feedforward: int = 2048, dropout: float = 0.1, output_size: int = 1):
         super(TransformerModel, self).__init__()
         self.d_model = d_model
         self.nhead = nhead
         self.num_layers = num_layers
+        self.input_size = input_size
         
-        self.embedding = nn.Linear(1, d_model)
-        self.pos_encoder = nn.Linear(1, d_model)
+        self.embedding = nn.Linear(input_size, d_model)
+        self.pos_encoder = nn.Linear(input_size, d_model)
         
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -34,11 +37,11 @@ class TransformerModel(nn.Module):
             num_layers=num_layers
         )
         
-        self.decoder = nn.Linear(d_model, 1)
+        self.decoder = nn.Linear(d_model, output_size)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Add positional encoding
-        x = self.embedding(x) + self.pos_encoder(x)
+        x = self.embedding(x.unsqueeze(-1) if x.dim() == 2 else x) + self.pos_encoder(x.unsqueeze(-1) if x.dim() == 2 else x)
         
         # Pass through transformer encoder
         x = self.transformer_encoder(x)
@@ -47,153 +50,39 @@ class TransformerModel(nn.Module):
         x = self.decoder(x[:, -1, :])
         return x
 
-class TransformerForecastingModel(BaseForecastingModel):
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        logger.info(f"Initializing Transformer model with config: {config}")
-        self.model = TransformerModel(
-            d_model=config.get("d_model", 64),
-            nhead=config.get("nhead", 4),
-            num_layers=config.get("num_layers", 2),
-            dim_feedforward=config.get("dim_feedforward", 256),
-            dropout=config.get("dropout", 0.1)
-        )
-        self.scaler = StandardScaler()
+class TransformerForecastingModel(TorchModel):
+    def __init__(self, config: Dict[str, Any], tracker: Optional[ForecastingTracker] = None):
+        super().__init__(config, tracker)
+        self.config = config
+        self.tracker = tracker
         
-    def preprocess_data(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-        logger.debug("Preprocessing data for Transformer model")
-        X = self.scaler.fit_transform(data.drop(columns=["date", "value"]))
-        y = data["value"].values
-        return X, y
+        # Initialize data preprocessing
+        scaling_method = self.config.get('preprocessing', {}).get('scaling_method', 'standard')
+        if scaling_method == 'minmax':
+            self.scaler = MinMaxScaler()
+        else:
+            self.scaler = StandardScaler()
+                
+    def initialize_model(self) -> None:
+        """Initialize the Transformer model with parameters from config."""
+        logger.info("Initializing Transformer model...")
         
-    def postprocess_data(self, data: np.ndarray) -> pd.DataFrame:
-        logger.debug("Postprocessing Transformer model predictions")
-        return pd.DataFrame(data, columns=["value"])
-        
-    def train(self, data: pd.DataFrame) -> Dict[str, Any]:
-        logger.info("Starting Transformer model training")
-        X, y = self.preprocess_data(data)
-        X = torch.FloatTensor(X)
-        y = torch.FloatTensor(y)
-        
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.config.get("learning_rate", 0.001))
-        criterion = nn.MSELoss()
-        
-        self.model.train()
-        for epoch in range(self.config.get("epochs", 100)):
-            optimizer.zero_grad()
-            outputs = self.model(X)
-            loss = criterion(outputs, y)
-            loss.backward()
-            optimizer.step()
-            self.history.append({"epoch": epoch, "loss": loss.item()})
+        try:
+            model_params = self.config.get('model')
             
-            if (epoch + 1) % 10 == 0:
-                logger.info(f"Epoch {epoch + 1}/{self.config.get('epochs', 100)}, Loss: {loss.item():.4f}")
-            
-        logger.info("Transformer model training completed")
-        return {"history": self.history}
-        
-    def predict(self, steps: int) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, np.ndarray]]]:
-        logger.info(f"Generating predictions for {steps} steps")
-        self.model.eval()
-        with torch.no_grad():
-            # Generate predictions for future steps
-            future_data = torch.zeros((steps, self.config.get("input_size", 1)))
-            predictions = self.model(future_data).numpy()
-            
-            # Calculate confidence intervals
-            std = np.std(predictions)
-            lower_bound = predictions - 1.96 * std
-            upper_bound = predictions + 1.96 * std
-            
-            return predictions, (lower_bound, upper_bound)
-        
-    def evaluate(self, test_data: pd.DataFrame) -> Dict[str, float]:
-        logger.info("Evaluating Transformer model performance")
-        X, y_true = self.preprocess_data(test_data)
-        X = torch.FloatTensor(X)
-        
-        self.model.eval()
-        with torch.no_grad():
-            y_pred = self.model(X).numpy()
-            
-        metrics = {
-            "rmse": np.sqrt(np.mean((y_true - y_pred) ** 2)),
-            "mae": np.mean(np.abs(y_true - y_pred)),
-            "mape": np.mean(np.abs((y_true - y_pred) / y_true)) * 100,
-            "r2": 1 - np.sum((y_true - y_pred) ** 2) / np.sum((y_true - np.mean(y_true)) ** 2)
-        }
-        
-        logger.info(f"Transformer model evaluation metrics: {metrics}")
-        return metrics
-        
-    def save(self, path: str) -> None:
-        logger.info(f"Saving Transformer model to {path}")
-        torch.save({
-            'model_state_dict': self.model.state_dict(),
-            'scaler': self.scaler,
-            'config': self.config,
-            'history': self.history
-        }, path)
-            
-    def load(self, path: str) -> None:
-        logger.info(f"Loading Transformer model from {path}")
-        checkpoint = torch.load(path)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.scaler = checkpoint['scaler']
-        self.config = checkpoint['config']
-        self.history = checkpoint['history']
-        
-    def optimize_hyperparameters(self, data: pd.DataFrame, n_trials: int = 100) -> Dict[str, Any]:
-        """Optimize Transformer hyperparameters using Optuna."""
-        logger.info(f"Starting hyperparameter optimization with {n_trials} trials")
-        def objective(trial):
-            hyperparameters = {
-                "d_model": trial.suggest_int("d_model", 32, 256),
-                "nhead": trial.suggest_int("nhead", 2, 8),
-                "num_layers": trial.suggest_int("num_layers", 1, 4),
-                "dim_feedforward": trial.suggest_int("dim_feedforward", 128, 512),
-                "dropout": trial.suggest_uniform("dropout", 0.1, 0.5),
-                "learning_rate": trial.suggest_loguniform("learning_rate", 0.0001, 0.01),
-                "epochs": trial.suggest_int("epochs", 50, 200),
-            }
-            
-            # Create and train model with trial hyperparameters
-            model = TransformerModel(
-                d_model=hyperparameters["d_model"],
-                nhead=hyperparameters["nhead"],
-                num_layers=hyperparameters["num_layers"],
-                dim_feedforward=hyperparameters["dim_feedforward"],
-                dropout=hyperparameters["dropout"]
+            self.model = TransformerModel(
+                input_size=model_params.get('input_size'),
+                d_model=model_params.get('d_model'),
+                nhead=model_params.get('nhead'),
+                num_layers=model_params.get('num_layers'),
+                dim_feedforward=model_params.get('dim_feedforward'),
+                dropout=model_params.get('dropout'),
+                output_size=model_params.get('output_size')
             )
             
-            X, y = self.preprocess_data(data)
-            X = torch.FloatTensor(X)
-            y = torch.FloatTensor(y)
+            logger.info("Transformer model initialized successfully")
+            logger.debug(f"Transformer parameters: {model_params}")
             
-            optimizer = torch.optim.Adam(model.parameters(), lr=hyperparameters["learning_rate"])
-            criterion = nn.MSELoss()
-            
-            # Training loop
-            model.train()
-            for epoch in range(hyperparameters["epochs"]):
-                optimizer.zero_grad()
-                outputs = model(X)
-                loss = criterion(outputs, y)
-                loss.backward()
-                optimizer.step()
-            
-            # Evaluate model
-            model.eval()
-            with torch.no_grad():
-                y_pred = model(X).numpy()
-            
-            # Return validation metric (RMSE)
-            return np.sqrt(np.mean((y.numpy() - y_pred) ** 2))
-        
-        study = optuna.create_study(direction="minimize")
-        study.optimize(objective, n_trials=n_trials)
-        
-        logger.info(f"Hyperparameter optimization completed. Best parameters: {study.best_params}")
-        return study.best_params 
+        except Exception as e:
+            logger.error(f"Error initializing Transformer model: {str(e)}")
+            raise

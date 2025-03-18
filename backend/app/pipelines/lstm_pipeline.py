@@ -21,7 +21,7 @@ class LSTMPipeline(BasePipeline):
             config: Configuration dictionary
             tracker: MLflow tracker instance
         """
-        super().__init__()
+        super().__init__(config=config, tracker=tracker)
         self.config = config
         self.tracker = tracker
         self.analyzer = Analyzer(config=config)

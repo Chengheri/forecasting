@@ -1,16 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Callable
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler
 import optuna
-from ..utils.model_trackers import BaseModelTracker
+from ..utils.trackers import ForecastingTracker
 from ..utils.logger import Logger
 
 logger = Logger()
 
 class BaseForecastingModel(ABC):
-    def __init__(self, config: Dict[str, Any], tracker: Optional[BaseModelTracker] = None):
+    def __init__(self, config: Dict[str, Any], tracker: Optional[ForecastingTracker] = None):
         """Initialize the base forecasting model."""
         self.config = config
         self.tracker = tracker
@@ -80,17 +79,7 @@ class BaseForecastingModel(ABC):
     @abstractmethod 
     def load(self, path: str) -> None:
         """Load the model from a file."""
-        pass
-    
-    @abstractmethod
-    def cross_validate(self, data: pd.DataFrame) -> None:
-        """Cross-validate the model on the data."""
-        pass    
-
-    @abstractmethod
-    def predict_into_future(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Predict the model into the future."""
-        pass 
+        pass   
 
     def _calculate_metrics(self, y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
         """Calculate evaluation metrics.
