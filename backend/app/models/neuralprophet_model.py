@@ -1,10 +1,15 @@
-from typing import Dict, Any, Optional, Tuple, Union, List, cast
+from typing import Dict, Any, Optional, Tuple, Union, List, cast, TYPE_CHECKING
 import pandas as pd
 import numpy as np
 import torch
 from neuralprophet import NeuralProphet
 from prophet import Prophet
 import optuna
+import joblib
+import os
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from pathlib import Path
 
 from .prophet_model import ProphetModel
 from ..utils.logger import Logger
@@ -12,6 +17,10 @@ from ..utils.trackers import ProphetTracker
 
 logger = Logger()
 
+# Type checking imports to avoid circular imports
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+    
 class NeuralProphetModel(ProphetModel):
     """NeuralProphet time series model extending Prophet with neural network capabilities."""
     
@@ -74,10 +83,14 @@ class NeuralProphetModel(ProphetModel):
         if self.neural_model is None:
             raise ValueError("Model must be trained before prediction")
         
-        forecast = self.neural_model.predict(data)
-        df_fc = self.neural_model.get_latest_forecast(forecast)
-        print(df_fc)
-        return df_fc
+        future = self.neural_model.make_future_dataframe(data, periods=0, n_historic_predictions=len(data))
+        forecast = self.neural_model.predict(future)
+        lower_bound = forecast['yhat1 5.0%'].values[-len(data):]
+        upper_bound = forecast['yhat1 95.0%'].values[-len(data):]
+        predictions = forecast['yhat1'].values[-len(data):]
+
+        logger.info("NeuralProphet predictions generated successfully")
+        return predictions, (lower_bound, upper_bound)
 
     def predict_into_future(self, data: pd.DataFrame, steps: int) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         """Generate predictions using the fitted NeuralProphet model."""
@@ -239,4 +252,412 @@ class NeuralProphetModel(ProphetModel):
             self.model = cast(Optional[Prophet], self.neural_model)
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")
-            raise 
+            raise
+
+    def cross_validation(
+        self, 
+        data: Union[pd.Series, pd.DataFrame, np.ndarray], 
+        fold_pct: float = 0.1, 
+        horizon_pct: float = 0.2,
+        k_folds: int = 5,
+        fold_overlap_pct: float = 0.0,
+        save_plots: bool = False,
+        plots_dir: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Perform time series cross-validation for NeuralProphet model.
+        
+        Args:
+            data: The time series data to be used for cross-validation
+            fold_pct: Percentage of data to use in each fold as validation
+            horizon_pct: Percentage of data to use for prediction horizon
+            k_folds: Number of folds to create
+            fold_overlap_pct: Percentage of overlap between folds (0.0 = no overlap)
+            save_plots: Whether to save the cross-validation plots
+            plots_dir: Directory to save plots to (if save_plots is True)
+            
+        Returns:
+            Dictionary containing cross-validation metrics and results summary
+        """
+        logger.info(f"Starting cross-validation with {k_folds} folds")
+        
+        try:
+            # Prepare data if needed
+            if isinstance(data, (pd.Series, np.ndarray)) or (isinstance(data, pd.DataFrame) and ('y' not in data.columns or 'ds' not in data.columns)):
+                prepared_data = self.prepare_data(data)
+            else:
+                prepared_data = data
+                
+            # Store training data for later use
+            self._training_data = prepared_data.copy() if isinstance(prepared_data, pd.DataFrame) else prepared_data
+            
+            # Initialize the model if not already initialized
+            if self.neural_model is None:
+                self.initialize_model()
+                
+            if self.neural_model is None:
+                raise ValueError("Failed to initialize NeuralProphet model")
+                
+            # Calculate fold size and horizon size
+            n_samples = len(prepared_data)
+            fold_size = int(n_samples * fold_pct)
+            horizon = int(n_samples * horizon_pct)
+            
+            # Ensure we have enough data for cross-validation
+            if n_samples < (horizon + fold_size) * k_folds:
+                logger.warning(f"Not enough data for {k_folds} folds. Reducing number of folds.")
+                k_folds = max(1, n_samples // (horizon + fold_size))
+                
+            logger.info(f"Performing {k_folds} fold cross-validation with horizon of {horizon} steps")
+            
+            # Manual cross-validation if NeuralProphet doesn't have built-in cross_validation
+            cv_results = []
+            metrics_all = []
+            
+            # Split data into folds
+            data_length = len(prepared_data)
+            fold_indices = []
+            
+            # Create fold indices
+            for i in range(k_folds):
+                # Calculate cutoff indices
+                cutoff = data_length - (i + 1) * horizon
+                if cutoff < fold_size:  # Not enough data for another fold
+                    break
+                fold_indices.append(cutoff)
+            
+            # Reverse order to start with earliest fold
+            fold_indices.reverse()
+            
+            # For each fold, train and predict
+            for fold, cutoff in enumerate(fold_indices):
+                # Split data
+                train_df = prepared_data.iloc[:cutoff].copy()
+                val_df = prepared_data.iloc[cutoff:cutoff + horizon].copy()
+                
+                # Initialize and fit model on training data
+                if fold > 0:  # Re-initialize model for each fold
+                    self.initialize_model()
+                    
+                try:
+                    # Fit model on training data
+                    self.neural_model.fit(train_df, **self.config['model'].get('fit_params', {}))
+                    
+                    # Create future dataframe for prediction
+                    future = self.neural_model.make_future_dataframe(
+                        df=train_df, 
+                        periods=horizon,
+                        n_historic_predictions=True
+                    )
+                    
+                    # Predict
+                    forecast = self.neural_model.predict(future)
+                    
+                    # Calculate metrics for this fold
+                    fold_metrics = self._calculate_backtest_metrics(val_df, forecast.iloc[-horizon:])
+                    
+                    # Add fold information
+                    fold_metrics['fold'] = fold
+                    fold_metrics['cutoff'] = cutoff
+                    fold_metrics['horizon'] = horizon
+                    
+                    metrics_all.append(fold_metrics)
+                    
+                    # Add to CV results
+                    result = {
+                        'fold': fold,
+                        'cutoff': cutoff,
+                        'train_df': train_df,
+                        'val_df': val_df,
+                        'forecast': forecast,
+                        'metrics': fold_metrics
+                    }
+                    cv_results.append(result)
+                    
+                    logger.info(f"Fold {fold} complete with RMSE: {fold_metrics.get('rmse', 'N/A')}")
+                    
+                except Exception as e:
+                    logger.warning(f"Error in fold {fold}: {str(e)}")
+                    continue
+            
+            # Calculate summary metrics across all folds
+            metrics_df = pd.DataFrame(metrics_all)
+            
+            # Convert metrics to dictionary format
+            metrics_by_fold = {}
+            for fold in range(len(fold_indices)):
+                fold_metrics = metrics_df[metrics_df['fold'] == fold]
+                
+                # Skip empty folds
+                if fold_metrics.empty:
+                    continue
+                    
+                # Get metrics for this fold
+                fold_summary = {}
+                for metric in ['mse', 'rmse', 'mae', 'mape', 'r2']:
+                    if metric in fold_metrics.columns:
+                        fold_summary[metric] = float(fold_metrics[metric].iloc[0])
+                
+                metrics_by_fold[f"fold_{fold}"] = fold_summary
+                
+            # Calculate overall metrics
+            summary_metrics = {}
+            for metric in ['mse', 'rmse', 'mae', 'mape', 'r2']:
+                if metric in metrics_df.columns:
+                    summary_metrics[metric] = float(metrics_df[metric].mean())
+            
+            # Create plots if requested
+            if save_plots and plots_dir is not None:
+                plots_path = Path(plots_dir)
+                plots_path.mkdir(parents=True, exist_ok=True)
+                
+                # Plot actual vs predicted for each fold
+                for fold, result in enumerate(cv_results):
+                    if 'forecast' not in result or 'val_df' not in result:
+                        continue
+                        
+                    plt.figure(figsize=(12, 6))
+                    
+                    # Get actual and predicted data
+                    val_df = result['val_df']
+                    forecast = result['forecast']
+                    
+                    # Plot actual vs predicted
+                    plt.plot(val_df['ds'], val_df['y'], 'b-', label='Actual')
+                    plt.plot(forecast.iloc[-len(val_df):]['ds'], 
+                             forecast.iloc[-len(val_df):]['yhat1'], 'r-', label='Predicted')
+                    
+                    plt.title(f'Cross-Validation Fold {fold}: Actual vs Predicted')
+                    plt.xlabel('Date')
+                    plt.ylabel('Value')
+                    plt.legend()
+                    plt.tight_layout()
+                    plt.savefig(plots_path / f"cv_fold_{fold}.png")
+                    plt.close()
+                
+                # Plot summary metrics
+                plt.figure(figsize=(10, 6))
+                metrics_df.plot(x='fold', y=['rmse', 'mae'], kind='bar', ax=plt.gca())
+                plt.title('Cross-Validation Metrics by Fold')
+                plt.tight_layout()
+                plt.savefig(plots_path / "cv_metrics.png")
+                plt.close()
+                
+                logger.info(f"Cross-validation plots saved to {plots_dir}")
+            
+            # Save the trained model - we consider the model from the last fold as final
+            if cv_results:
+                self._model_is_fitted = True
+            
+            # Log results to tracker if available
+            if self.tracker and metrics_by_fold:
+                logger.debug("Logging cross-validation results to tracker")
+                self.tracker.log_params_safely({
+                    'cross_validation.folds': len(fold_indices),
+                    'cross_validation.horizon': horizon,
+                    'cross_validation.fold_size': fold_size,
+                    **{f'cross_validation.metrics.{k}': v for k, v in summary_metrics.items()}
+                })
+                
+                # Also log the best fold metrics
+                best_fold = min(metrics_by_fold.keys(), 
+                                key=lambda f: metrics_by_fold[f].get('rmse', float('inf')) 
+                                if metrics_by_fold[f] else float('inf'))
+                
+                if best_fold in metrics_by_fold and metrics_by_fold[best_fold]:
+                    self.tracker.log_params_safely({
+                        'cross_validation.best_fold': best_fold,
+                        **{f'cross_validation.best_fold.{k}': v for k, v in metrics_by_fold[best_fold].items()}
+                    })
+            
+            cv_results_dict = {
+                'metrics_by_fold': metrics_by_fold,
+                'summary_metrics': summary_metrics,
+                'cv_results': cv_results,
+                'metrics_df': metrics_df,
+                'k_folds': len(fold_indices),
+                'horizon': horizon,
+                'fold_size': fold_size
+            }
+            
+            logger.info(f"Cross-validation completed successfully with summary metrics: {summary_metrics}")
+            return cv_results_dict
+            
+        except Exception as e:
+            logger.error(f"Error in cross-validation: {str(e)}")
+            raise
+            
+    def cross_validation_backtest(
+        self,
+        data: Union[pd.Series, pd.DataFrame, np.ndarray],
+        test_percentage: float = 0.2,
+        periods: Optional[int] = None,
+        horizon: Optional[int] = None,
+        initial: Optional[int] = None,
+        period: Optional[int] = None,
+        save_plots: bool = False,
+        plots_dir: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Perform backtest cross-validation with expanding window approach.
+        
+        This method implements an expanding window approach where we:
+        1. Start with a small initial training set
+        2. Make predictions for the next horizon steps
+        3. Expand the training window to include more data
+        4. Repeat until we've covered the entire dataset
+        
+        Args:
+            data: The time series data to use for backtesting
+            test_percentage: Percentage of data to use as test set
+            periods: Number of forecast steps for each window
+            horizon: Alias for periods (for compatibility)
+            initial: Initial number of samples in the first training window
+            period: Number of samples to expand the window by in each iteration
+            save_plots: Whether to save the backtest plots
+            plots_dir: Directory to save plots to (if save_plots is True)
+            
+        Returns:
+            Dictionary containing backtest metrics and results
+        """
+        logger.info("Starting cross-validation backtest")
+        
+        try:
+            # Prepare data if needed
+            if isinstance(data, (pd.Series, np.ndarray)) or (isinstance(data, pd.DataFrame) and ('y' not in data.columns or 'ds' not in data.columns)):
+                prepared_data = self.prepare_data(data)
+            else:
+                prepared_data = data
+                
+            # Store training data for later use
+            self._training_data = prepared_data.copy() if isinstance(prepared_data, pd.DataFrame) else prepared_data
+            
+            # Initialize the model if not already initialized
+            if self.neural_model is None:
+                self.initialize_model()
+                
+            if self.neural_model is None:
+                raise ValueError("Failed to initialize NeuralProphet model")
+                
+            # Calculate test size
+            n_samples = len(prepared_data)
+            test_size = int(n_samples * test_percentage)
+            train_size = n_samples - test_size
+            
+            # Set default values for backtest parameters if not provided
+            if periods is None and horizon is None:
+                periods = max(30, int(test_size * 0.2))  # Default to 20% of test data or 30 samples
+            elif horizon is not None and periods is None:
+                periods = horizon
+                
+            if initial is None:
+                initial = max(30, int(train_size * 0.5))  # Default to 50% of training data or 30 samples
+                
+            if period is None:
+                period = max(1, int(periods * 0.5))  # Default to 50% of the forecast horizon
+                
+            logger.info(f"Backtest configuration: initial={initial}, period={period}, horizon={periods}")
+            
+            # Perform backtesting using NeuralProphet's built-in functionality
+            backtest_df = self.neural_model.predict(df=prepared_data)
+            
+            # When model is fitted during backtesting, we consider it trained
+            self._model_is_fitted = True
+            
+            # Calculate metrics on test data
+            test_df = prepared_data.iloc[-test_size:]
+            backtest_metrics = self._calculate_backtest_metrics(test_df, backtest_df.iloc[-test_size:])
+            
+            # Create plots if requested
+            if save_plots and plots_dir is not None:
+                plots_path = Path(plots_dir)
+                plots_path.mkdir(parents=True, exist_ok=True)
+                
+                plt.figure(figsize=(12, 6))
+                
+                # Plot actual vs predicted
+                plt.plot(test_df['ds'], test_df['y'], 'b-', label='Actual')
+                plt.plot(backtest_df.iloc[-test_size:]['ds'], 
+                         backtest_df.iloc[-test_size:]['yhat1'], 'r-', label='Predicted')
+                
+                # Add confidence intervals if available
+                if 'yhat1_lower' in backtest_df.columns and 'yhat1_upper' in backtest_df.columns:
+                    plt.fill_between(
+                        backtest_df.iloc[-test_size:]['ds'],
+                        backtest_df.iloc[-test_size:]['yhat1_lower'],
+                        backtest_df.iloc[-test_size:]['yhat1_upper'],
+                        color='r', alpha=0.2, label='95% CI'
+                    )
+                
+                plt.title('Backtest: Actual vs Predicted')
+                plt.xlabel('Date')
+                plt.ylabel('Value')
+                plt.legend()
+                plt.tight_layout()
+                plt.savefig(plots_path / "backtest_prediction.png")
+                plt.close()
+                
+                logger.info(f"Backtest plots saved to {plots_dir}")
+            
+            # Log results to tracker if available
+            if self.tracker:
+                logger.debug("Logging backtest results to tracker")
+                self.tracker.log_params_safely({
+                    'backtest.test_size': test_size,
+                    'backtest.initial': initial,
+                    'backtest.period': period,
+                    'backtest.horizon': periods,
+                    **{f'backtest.metrics.{k}': v for k, v in backtest_metrics.items()}
+                })
+            
+            backtest_results = {
+                'backtest_metrics': backtest_metrics,
+                'backtest_df': backtest_df,
+                'test_size': test_size,
+                'initial': initial,
+                'period': period,
+                'horizon': periods
+            }
+            
+            logger.info(f"Backtest completed successfully with metrics: {backtest_metrics}")
+            return backtest_results
+            
+        except Exception as e:
+            logger.error(f"Error in backtest: {str(e)}")
+            raise
+
+    def _calculate_backtest_metrics(self, actual_df: pd.DataFrame, forecast_df: pd.DataFrame) -> Dict[str, float]:
+        """
+        Calculate metrics for backtest evaluation.
+        
+        Args:
+            actual_df: DataFrame containing actual values
+            forecast_df: DataFrame containing predicted values
+            
+        Returns:
+            Dictionary of metrics
+        """
+        # Extract actual and predicted values
+        actual = actual_df['y'].values
+        predicted = forecast_df['yhat1'].values
+        
+        # Handle case where forecast_df might be a numpy array
+        if isinstance(forecast_df, np.ndarray):
+            # Assume it's already the predicted values
+            predicted = forecast_df
+            
+            # Adjust length to match actual if needed
+            min_length = min(len(actual), len(predicted))
+            actual = actual[:min_length]
+            predicted = predicted[:min_length]
+        
+        # Ensure same length for DataFrame case
+        else:
+            min_length = min(len(actual), len(predicted))
+            actual = actual[:min_length]
+            predicted = predicted[:min_length]
+        
+        metrics = self._calculate_metrics(actual, predicted)
+
+        return metrics
+            

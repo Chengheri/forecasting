@@ -182,20 +182,28 @@ class Analyzer:
         window = window if window is not None else self.default_window
         rolling_rmse = []
         rolling_mae = []
-        
+
         for i in range(len(actual)):
             start_idx = max(0, i - window + 1)
             act_window = actual[start_idx:i+1]
             pred_window = predicted[start_idx:i+1]
             
             if len(act_window) > 0:
-                mse = mean_squared_error(act_window, pred_window)
-                mae = mean_absolute_error(act_window, pred_window)
-                rolling_rmse.append(np.sqrt(mse))
-                rolling_mae.append(mae)
+                try:
+                    mse = mean_squared_error(act_window, pred_window)
+                    mae = mean_absolute_error(act_window, pred_window)
+                    rolling_rmse.append(np.sqrt(mse))
+                    rolling_mae.append(mae)
+                except Exception as e:
+                    rolling_rmse.append(np.nan)
+                    rolling_mae.append(np.nan)
             else:
                 rolling_rmse.append(np.nan)
                 rolling_mae.append(np.nan)
+        
+        if all(np.isnan(rolling_rmse)) or all(np.isnan(rolling_mae)):
+            logger.warning("All metrics are NaN. Skipping metrics over time plot.")
+            return None
         
         logger.info("Plotting metrics over time...")
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=self.PLOT_CONFIGS['figsize_large'])

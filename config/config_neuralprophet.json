@@ -45,9 +45,9 @@
         "n_changepoints": 25,
         
         "learning_rate": 0.001,
-        "epochs": 1,
+        "epochs": 100,
         "batch_size": 672,
-        "n_forecasts": 1,
+        "n_forecasts": 24,
         "n_lags": 48,
         "ar_reg": 0.1,
         "future_regressors_model": "neural_nets",

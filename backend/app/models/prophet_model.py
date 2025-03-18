@@ -12,10 +12,12 @@ import os
 import uuid
 from pandas.tseries.frequencies import infer_freq
 
+from .base_model import BaseForecastingModel
+
 warnings.filterwarnings('ignore')
 logger = Logger()
 
-class ProphetModel:
+class ProphetModel(BaseForecastingModel):
     """Prophet time series model with unified tracking."""
     
     def __init__(
@@ -34,16 +36,6 @@ class ProphetModel:
 
         # Initialize model with data if provided
         self._log_initialization()
-    
-    def _log_initialization(self) -> None:
-        """Log initialization parameters."""
-        logger.info(f"Initialized {self.config['model']['model_type'].title()} model...")
-        
-        if self.tracker:
-            logger.debug("Logging model parameters to tracker")
-            self.tracker.log_params_safely({
-                'model.type': self.config['model']['model_type']
-            })
     
     def prepare_data(self, data: Union[pd.DataFrame, pd.Series, np.ndarray]) -> pd.DataFrame:
         """Prepare data for Prophet model."""
@@ -172,30 +164,7 @@ class ProphetModel:
         actual = np.asarray(data['y'].values, dtype=np.float64)
         predicted = np.asarray(forecast['yhat'].values, dtype=np.float64)
         
-        # Avoid division by zero in MAPE calculation
-        non_zero_mask = np.asarray(actual != 0, dtype=bool)
-        if bool(non_zero_mask.any()):  # Convert numpy.bool_ to Python bool
-            mape = float(np.mean(np.abs((actual[non_zero_mask] - predicted[non_zero_mask]) / actual[non_zero_mask])) * 100)
-        else:
-            mape = 0.0
-        
-        # Calculate metrics and convert to Python float
-        mse = float(np.mean((actual - predicted) ** 2))
-        rmse = float(np.sqrt(mse))
-        mae = float(np.mean(np.abs(actual - predicted)))
-        r2 = float(1 - np.sum((actual - predicted) ** 2) / (np.sum((actual - np.mean(actual)) ** 2) + 1e-10))
-        
-        metrics = {
-            'mse': mse,
-            'rmse': rmse,
-            'mae': mae,
-            'mape': mape,
-            'r2': r2
-        }
-        
-        # Ensure no nan values in metrics and convert to Python float
-        metrics = {k: float(v) if not np.isnan(v) else 0.0 for k, v in metrics.items()}
-        return metrics
+        return super()._calculate_metrics(actual, predicted)
     
     def grid_search(self, data: Union[pd.Series, pd.DataFrame, np.ndarray],
                    param_grid: Optional[Dict[str, List[Any]]] = None,

@@ -38,7 +38,7 @@ class DataLoader:
             logger.debug(f"Using date column: {actual_date_column}")
             
             # Load and parse the CSV file
-            data = pd.read_csv(actual_path, parse_dates=[actual_date_column])
+            data = pd.read_csv(actual_path, parse_dates=[actual_date_column], index_col=0)
             
             # Validate data
             if actual_date_column not in data.columns:
@@ -47,7 +47,6 @@ class DataLoader:
             # Sort and set index
             data = data.sort_values(actual_date_column)
             data.set_index(actual_date_column, inplace=True)
-            
             logger.info(f"Successfully loaded data with shape: {data.shape}")
             logger.debug(f"DataFrame columns: {list(data.columns)}")
             

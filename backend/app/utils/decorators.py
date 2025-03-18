@@ -4,7 +4,9 @@ import time
 from functools import wraps
 from datetime import datetime, timedelta
 from backend.app.utils.logger import Logger
+from typing import Callable, TypeVar
 
+T = TypeVar('T')
 # Initialize logger
 logger = Logger()
 
@@ -53,4 +55,26 @@ def log_execution_time(func):
         
         return result
     
-    return wrapper 
+    return wrapper
+
+def handle_pipeline_errors(func: Callable[..., T]) -> Callable[..., T]:
+    """Decorator to handle common error patterns in pipeline methods.
+    
+    Can be used with any class that has a _log_error method.
+    
+    Args:
+        func: The function to decorate
+        
+    Returns:
+        Decorated function that handles errors
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            # Get the instance (self) from args
+            if args and hasattr(args[0], '_log_error'):
+                args[0]._log_error(f"Failed in {func.__name__}: {str(e)}")
+            raise
+    return wrapper

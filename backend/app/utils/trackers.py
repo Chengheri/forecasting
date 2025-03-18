@@ -118,94 +118,69 @@ class ForecastingTracker(PreprocessorTracker):
                 super().__init__(experiment_name=experiment_name, run_name=run_name)
             else:
                 raise
-    
-    
-class LSTMTracker(ForecastingTracker):
-    """Tracker for LSTM model training and evaluation."""
-    
-    def log_model_params(self, params: Dict[str, Any]) -> None:
-        """Log LSTM-specific parameters."""
-        lstm_params = {
-            "input_size": params.get("input_size"),
-            "hidden_size": params.get("hidden_size"),
-            "num_layers": params.get("num_layers"),
-            "dropout": params.get("dropout", 0.2),
-            "learning_rate": params.get("learning_rate"),
-            "batch_size": params.get("batch_size"),
-            "epochs": params.get("epochs")
-        }
-        prefixed_params = self._prefix_dict_keys(lstm_params, "model.lstm")
-        self.log_params_safely(prefixed_params)
 
-class ProphetTracker(ForecastingTracker):
-    """Tracker for Prophet model training and evaluation."""
-    
-    def log_model_params(self, params: Dict[str, Any]) -> None:
+    def log_model_params(self, params: Dict[str, Any], model_type: str) -> None:
         """Log Prophet-specific parameters."""
-        prophet_params = {
-            "changepoint_prior_scale": params.get("changepoint_prior_scale", 0.05),
-            "seasonality_prior_scale": params.get("seasonality_prior_scale", 10.0),
-            "holidays_prior_scale": params.get("holidays_prior_scale", 10.0),
-            "seasonality_mode": params.get("seasonality_mode", "additive"),
-            "changepoint_range": params.get("changepoint_range", 0.8),
-            "growth": params.get("growth", "linear"),
-            "n_changepoints": params.get("n_changepoints", 25),
-            "yearly_seasonality": params.get("yearly_seasonality", "auto"),
-            "weekly_seasonality": params.get("weekly_seasonality", "auto"),
-            "daily_seasonality": params.get("daily_seasonality", "auto")
-        }
-        prefixed_params = self._prefix_dict_keys(prophet_params, "model.prophet")
+        prefixed_params = self._prefix_dict_keys(params, f"model.{model_type}")
         self.log_params_safely(prefixed_params)
     
     def log_training_metrics(self, metrics: Dict[str, float]) -> None:
         """Log Prophet training metrics."""
         training_metrics = {
-            "mse": metrics.get("mse"),
-            "rmse": metrics.get("rmse"),
-            "mae": metrics.get("mae"),
-            "mape": metrics.get("mape"),
-            "r2": metrics.get("r2")
+            "mse": metrics.get("mse", None),
+            "rmse": metrics.get("rmse", None),
+            "mae": metrics.get("mae", None),
+            "mape": metrics.get("mape", None),
+            "r2": metrics.get("r2", None)
         }
         # Filter out None values
-        training_metrics = {k: v for k, v in training_metrics.items() if v is not None}
-        prefixed_metrics = self._prefix_dict_keys(training_metrics, "metrics.training")
+        prefixed_metrics = self._prefix_dict_keys(training_metrics, "metrics.train")
         self.log_metrics_safely(prefixed_metrics)
-    
+
+    def log_test_metrics(self, metrics: Dict[str, float]) -> None:
+        """Log forecast evaluation metrics."""
+        forecast_metrics = {
+            "rmse": metrics.get("rmse", None),
+            "mae": metrics.get("mae", None),
+            "mape": metrics.get("mape", None),
+            "r2": metrics.get("r2", None),
+            "directional_accuracy": metrics.get("directional_accuracy", None)
+        }
+        prefixed_metrics = self._prefix_dict_keys(forecast_metrics, "metrics.forecast")
+        self.log_metrics_safely(prefixed_metrics)
+
     def log_optimization_results(self, results: Dict[str, Any], method: str = "optuna") -> None:
         """Log hyperparameter optimization results."""
         if method == "optuna":
             optimization_info = {
                 "best_value": results.get("best_value"),
                 "n_trials": results.get("n_trials"),
-                "timeout": results.get("timeout")
+                "timeout": results.get("timeout"),
+                "best_metrics": results.get("best_metrics", {}).get("rmse") if results.get("best_metrics") else None,
+                "best_params": results.get("best_params", {})
             }
-            # Log best parameters separately
-            if "best_params" in results:
-                for param_name, param_value in results["best_params"].items():
-                    optimization_info[f"best_params.{param_name}"] = param_value
-        else:  # grid search
+            prefixed_info = self._prefix_dict_keys(optimization_info, f"optuna.{method}")
+        
+        elif method == "grid_search":  # grid search
             optimization_info = {
                 "total_combinations": results.get("total_combinations_tested"),
-                "best_rmse": results.get("best_metrics", {}).get("rmse") if results.get("best_metrics") else None
+                "convergence_rate": results.get("convergence_rate"),
+                "all_results": results.get("all_results", {}),
+                "best_metrics": results.get("best_metrics", {}),
+                "best_params": results.get("best_params", {})
             }
-            # Log best parameters separately
-            if "best_params" in results:
-                for param_name, param_value in results["best_params"].items():
-                    optimization_info[f"best_params.{param_name}"] = param_value
+            prefixed_info = self._prefix_dict_keys(optimization_info, f"grid_search.{method}")
         
-        prefixed_info = self._prefix_dict_keys(optimization_info, f"optimization.{method}")
         self.log_params_safely(prefixed_info)
     
-    def log_forecast_metrics(self, metrics: Dict[str, float]) -> None:
-        """Log forecast evaluation metrics."""
-        forecast_metrics = {
-            "rmse": metrics.get("rmse"),
-            "mae": metrics.get("mae"),
-            "mape": metrics.get("mape"),
-            "r2": metrics.get("r2")
-        }
-        prefixed_metrics = self._prefix_dict_keys(forecast_metrics, "metrics.forecast")
-        self.log_metrics_safely(prefixed_metrics)
+    
+class LSTMTracker(ForecastingTracker):
+    """Tracker for LSTM model training and evaluation."""
+    pass
+
+class ProphetTracker(ForecastingTracker):
+    """Tracker for Prophet model training and evaluation."""
+    pass
 
 class ARIMATracker(ForecastingTracker):
     """Tracker for ARIMA model training and evaluation."""
