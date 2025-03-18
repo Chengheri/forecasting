@@ -292,11 +292,10 @@ Contributions are welcome! To contribute:
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-Please check our contribution guidelines for more details.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License.
 
 ## 📚 Citations
 
@@ -305,7 +304,7 @@ If you use this system in your research, please cite it:
 author = {BAO Chengheri},
 title = {Time Series Forecasting System},
 year = {2025},
-url = {https://github.com/username/time-series-forecasting}
+url = {https://github.com/Chengheri/forecasting}
 }
 
 
