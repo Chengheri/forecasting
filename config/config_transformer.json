@@ -24,6 +24,15 @@
         "add_lag_features": true,
         "lag_features": [1, 2, 3, 7, 14, 30],
         "add_rolling_features": true,
+        "add_tda_features": true,
+        "tda": {
+            "max_homology_dim": 1,
+            "window_sizes": [10, 20, 30],
+            "step_size": 5,
+            "embedding_dimension": 3,
+            "embedding_delay": 1,
+            "persistence_features": ["sum", "max", "mean", "std", "entropy"]
+        },
         "rolling_windows": [7, 14, 30],
         "rolling_functions": ["mean", "std", "min", "max"],
         "scale_features": false,

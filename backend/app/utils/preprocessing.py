@@ -290,6 +290,31 @@ class DataPreprocessor:
         except Exception as e:
             logger.error(f"Error adding rolling features: {str(e)}")
             raise
+
+    def add_tda_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add topological data analysis features.
+        
+        Args:
+            df: Input DataFrame
+            
+        Returns:
+            DataFrame with TDA features added
+        """
+        if not self.config.get('add_tda_features', False):
+            return df
+            
+        logger.info("Adding topological data analysis features")
+        
+        # Initialize the feature extractor
+        tda_extractor = TopologicalFeatureExtractor(self.config)
+        
+        # Transform the data
+        df_with_tda = tda_extractor.transform(df)
+        
+        self.pipeline_steps.append({"step": "add_tda_features", 
+                                "num_features": len(tda_extractor.feature_names)})
+        
+        return df_with_tda
     
     def handle_missing_values(self, df: pd.DataFrame, method: str = 'interpolate') -> pd.DataFrame:
         """Handle missing values in the dataset."""
@@ -344,18 +369,14 @@ class DataPreprocessor:
             initial_stats = self._log_data_stats(df, "initial")
             
             # Handle missing values if configured
-            if self.config.get('handle_missing_values', False):
-                method = self.config.get('missing_values_method', 'interpolate')
+            if self.config.get('handle_missing_values'):
+                method = self.config.get('missing_values_method')
                 df = self.handle_missing_values(df, method)
                 self.pipeline_steps.append({"step": "handle_missing_values", "method": method})
             
             # Handle outliers and anomalies if configured
-            if self.config.get('handle_outliers', False):
-                outlier_config = self.config.get('outlier_config', {
-                    'method': 'isolation_forest',
-                    'contamination': 0.1,
-                    'target_column': target_column
-                })
+            if self.config.get('handle_outliers'):
+                outlier_config = self.config.get('outlier_config')
                 
                 from .advanced_preprocessing import AdvancedPreprocessor
                 advanced_preprocessor = AdvancedPreprocessor(
@@ -368,30 +389,30 @@ class DataPreprocessor:
                     data=df,
                     target_column=target_column,
                     method=outlier_config['method'],
-                    contamination=outlier_config.get('contamination', 0.1),
-                    handle_anomalies=self.config.get('clean_anomalies', True)
+                    contamination=outlier_config.get('contamination'),
+                    handle_anomalies=self.config.get('clean_anomalies')
                 )
                 
                 # Remove anomaly column if not needed
-                if 'is_anomaly' in df.columns and not self.config.get('keep_anomaly_labels', False):
+                if 'is_anomaly' in df.columns and not self.config.get('keep_anomaly_labels'):
                     df = df.drop('is_anomaly', axis=1)
                 
                 self.pipeline_steps.append({
                     "step": "process_anomalies",
                     "method": outlier_config['method'],
-                    "handled_anomalies": self.config.get('clean_anomalies', True),
-                    "kept_labels": self.config.get('keep_anomaly_labels', False)
+                    "handled_anomalies": self.config.get('clean_anomalies'),
+                    "kept_labels": self.config.get('keep_anomaly_labels')
                 })
             
             # Add time features if configured
-            if self.config.get('add_time_features', True):
+            if self.config.get('add_time_features'):
                 date_column = self.config.get('date_column', 'date')
                 df = self.add_time_features(df, date_column)
                 self.pipeline_steps.append({"step": "add_time_features"})
             
             # Add lag features if configured
-            if self.config.get('add_lag_features', True):
-                lag_periods = self.config.get('lag_features', [1, 2, 3, 24, 48])
+            if self.config.get('add_lag_features'):
+                lag_periods = self.config.get('lag_features')
                 df = self.add_lag_features(df, target_column, lag_periods)
                 self.pipeline_steps.append({
                     "step": "add_lag_features",
@@ -399,18 +420,22 @@ class DataPreprocessor:
                 })
             
             # Add rolling features if configured
-            if self.config.get('add_rolling_features', True):
-                windows = self.config.get('rolling_windows', [6, 12, 24])
-                functions = self.config.get('rolling_functions', ['mean', 'std'])
+            if self.config.get('add_rolling_features'):
+                windows = self.config.get('rolling_windows')
+                functions = self.config.get('rolling_functions')
                 df = self.add_rolling_features(df, target_column, windows, functions)
                 self.pipeline_steps.append({
                     "step": "add_rolling_features",
                     "windows": windows,
                     "functions": functions
                 })
+            # Add TDA features if configured
+            if self.config.get('add_tda_features', False):
+                df = self.add_tda_features(df)
+                logger.info(f"TDA features added, new shape: {df.shape}")
             
             # Scale features if configured
-            if self.config.get('scale_features', False):
+            if self.config.get('scale_features'):
                 df = self.scale_features(df)
                 self.pipeline_steps.append({
                     "step": "scale_features",
