@@ -10,6 +10,7 @@ A flexible and powerful system for time series forecasting, utilizing advanced m
 
 - [Overview](#overview)
 - [Features](#features)
+- [Project Structure](#project-structure)
 - [Architecture](#architecture)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -26,7 +27,6 @@ A flexible and powerful system for time series forecasting, utilizing advanced m
   - [Topological Data Analysis (TDA)](#topological-data-analysis-tda)
 - [Experiment Tracking](#experiment-tracking)
 - [Examples](#examples)
-- [Project Structure](#project-structure)
 - [Contributing](#contributing)
 - [License](#license)
 - [Citations](#citations)
@@ -280,10 +280,34 @@ forecast_horizon = 30
 predictions, (lower_bound, upper_bound) = model.predict(forecast_horizon)
 ```
 
-## Contributing | Contribution
+## 👥 Contributing
 
-Contributions are welcome! Please check CONTRIBUTING.md for guidelines.
+Contributions are welcome! To contribute:
 
-## License | Licence
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-This project is licensed under the MIT License. See the LICENSE file for details.
+Please check our contribution guidelines for more details.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 📚 Citations
+
+If you use this system in your research, please cite it:
+@software{time_series_forecasting_2025,
+author = {BAO Chengheri},
+title = {Time Series Forecasting System},
+year = {2025},
+url = {https://github.com/username/time-series-forecasting}
+}
+
+
+References for methods used:
+- LSTM: Hochreiter, S., & Schmidhuber, J. (1997). Long short-term memory. Neural computation, 9(8), 1735-1780.
+- Transformer: Vaswani, A., et al. (2017). Attention is all you need. In Advances in neural information processing systems.
+- TDA: Edelsbrunner, H., & Harer, J. (2010). Computational topology: an introduction. American Mathematical Society.
