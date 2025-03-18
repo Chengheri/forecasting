@@ -6,7 +6,7 @@
 
 A flexible and powerful system for time series forecasting, utilizing advanced models like LSTM and Transformer, with feature engineering capabilities including topological data analysis.
 
-## 📋 Table of Contents
+📋 ## Table of Contents
 
 - [Overview](#overview)
 - [Features](#features)
@@ -31,7 +31,7 @@ A flexible and powerful system for time series forecasting, utilizing advanced m
 - [License](#license)
 - [Citations](#citations)
 
-## 🔍 Overview
+🔍 ## Overview
 
 This time series forecasting system is designed to handle various types of temporal data and provide accurate predictions using advanced algorithms. Our framework supports seamless integration of various models, including recurrent neural networks (LSTM) and attention-based architectures (Transformer).
 
