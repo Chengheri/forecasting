@@ -18,18 +18,20 @@ A flexible and powerful system for time series forecasting, utilizing advanced m
   - [Training Models](#training-models)
   - [Evaluation](#evaluation)
   - [Prediction](#prediction)
-- [Available Models](#available-models)
+  - [Backend](#backend)
+  - [Frontend](#frontend)
+- [Available Models](#-available-models)
   - [LSTM](#lstm)
   - [Transformer](#transformer)
   - [Prophet](#prophet)
-- [Feature Engineering](#feature-engineering)
+- [Feature Engineering](#-feature-engineering)
   - [Temporal Features](#temporal-features)
   - [Topological Data Analysis (TDA)](#topological-data-analysis-tda)
-- [Experiment Tracking](#experiment-tracking)
-- [Examples](#examples)
-- [Contributing](#contributing)
-- [License](#license)
-- [Citations](#citations)
+- [Experiment Tracking](#-experiment-tracking)
+- [Examples](#-examples)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Citations](#-citations)
 
 ## 🔍 Overview  
 
@@ -153,7 +155,7 @@ python examples/evaluate_model.py --model_path data/models/lstm_20230101_120000.
 # Generate predictions
 python examples/predict.py --model_path data/models/transformer_20230101_120000.pt --horizon 30 --output predictions.csv
 ```
-### Backend`
+### Backend
 
 To start the backend server:
 
