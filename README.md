@@ -11,7 +11,7 @@ A flexible and powerful system for time series forecasting, utilizing advanced m
 - [Overview](#-overview)
 - [Features](#-features)
 - [Project Structure](#-project-structure)
-- [Architecture](#-architecture)
+- [Architecture](#%EF%B8%8F-architecture)
 - [Installation](#-installation)
 - [Usage](#-usage)
   - [Configuration](#configuration)
