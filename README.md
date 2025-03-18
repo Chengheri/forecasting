@@ -24,6 +24,8 @@ A flexible and powerful system for time series forecasting, utilizing advanced m
   - [LSTM](#lstm)
   - [Transformer](#transformer)
   - [Prophet](#prophet)
+  - [Neural Prophet](#neural-prophet)
+  - [SARIMA](#sarima)
 - [Feature Engineering](#-feature-engineering)
   - [Temporal Features](#temporal-features)
   - [Topological Data Analysis (TDA)](#topological-data-analysis-tda)
@@ -221,6 +223,54 @@ Integration of Facebook's Prophet model with:
 - Holiday detection
 - Automatic changepoints
 - Confidence intervals
+
+### Neural Prophet
+
+Our Neural Prophet implementation combines the best of Prophet and neural networks:
+- AR-Net for autoregressive modeling of time series
+- Flexible seasonality modeling using Fourier terms
+- Future regressors and lagged regressors support
+- Configurable neural network components
+- Automatic handling of missing values
+- Support for quantile forecasting
+
+Typical configuration:
+```json
+"model": {
+  "model_type": "neuralprophet",
+  "n_forecasts": 30,
+  "n_lags": 14,
+  "yearly_seasonality": true,
+  "weekly_seasonality": true,
+  "daily_seasonality": false,
+  "learning_rate": 0.01,
+  "epochs": 100,
+  "batch_size": 64
+}
+```
+
+### SARIMA
+
+Our SARIMA (Seasonal AutoRegressive Integrated Moving Average) implementation provides:
+- Explicit modeling of trend, seasonality, and residuals
+- Automatic parameter selection using information criteria (AIC, BIC)
+- Stationarity tests and differencing
+- Seasonal decomposition and adjustment
+- Diagnostic checking with residual analysis
+- Confidence intervals for forecasts
+
+Typical configuration:
+```json
+"model": {
+  "model_type": "sarima",
+  "order": [1, 1, 1],
+  "seasonal_order": [1, 1, 1, 12],
+  "trend": "c",
+  "enforce_stationarity": true,
+  "enforce_invertibility": true,
+  "information_criterion": "aic"
+}
+```
 
 ## 🔧 Feature Engineering
 
